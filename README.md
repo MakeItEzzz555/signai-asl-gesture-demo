@@ -1,59 +1,46 @@
-# SignAI: ASL Gesture Demo
+# SignAI ASL Gesture Demo
 
-Real-time, browser-only ASL gesture recognition for a local hackathon demo.
+Real-time, browser-only ASL gesture recognition for a local hackathon prototype.
 
-The demo focuses on a reliable narrow scope:
+SignAI combines MediaPipe hand/face landmarks, ONNX Runtime Web, and a small deterministic face-touch layer to recognize a narrow, reliable set of ASL-inspired demo gestures without uploading video or requiring a backend.
 
-- One primary hand for ML gesture recognition
-- Five core gestures: `hello`, `yes`, `no`, `please`, `help`
-- Face-touch interactions using fingertip proximity to face regions
-- Fully client-side processing with no video upload or backend
+## Highlights
 
-## Quick Start
+- **Client-side only:** webcam frames stay in the browser.
+- **One-hand recognition:** ONNX sequence model for `hello`, `yes`, `no`, `please`, and `help`.
+- **Face-region interactions:** deterministic index/middle fingertip proximity for mouth, eye, nose, forehead, and ear labels.
+- **Speech output:** confirmed words can be spoken through the Web Speech API.
+- **Custom training workflow:** collaborators can record samples, train a TensorFlow.js model, and inspect metrics in the app.
+- **Hackathon-ready scope:** second-hand recognition and broad gesture expansion are intentionally deferred until stronger data exists.
 
-```bash
-npm install
-npm run dev
-```
-
-Open the Vite URL, grant camera permission, and use the **Recognize** page.
-
-To train a custom browser-local model, use **Dataset** to record samples, then
-open **Train** and **Evaluate** from the sidebar.
-
-## Demo Behavior
-
-The primary recognition path is:
+## Demo Flow
 
 ```text
 Webcam
-  -> MediaPipe Hands: one primary hand, 21 landmarks
-  -> normalize hand landmarks
-  -> 30-frame sequence buffer with coordinate deltas
+  -> MediaPipe Hands: one primary hand
+  -> normalized 30-frame landmark sequence
   -> ONNX Runtime Web
   -> segmentation FSM
-  -> sentence output + optional speech
+  -> confirmed word + optional speech
 ```
 
-Face-touch gestures are handled separately:
+Face-region labels are handled separately:
 
 ```text
 MediaPipe FaceMesh
-  -> fingertip-to-face-region proximity check
-  -> region label such as Think, Eat / Speak, Smell, See / Look, Listen
-  -> sentence output + optional speech
+  -> index/middle fingertip proximity
+  -> 4-frame same-region confirmation
+  -> Think, Eat / Speak, Smell, See / Look, or Listen
 ```
 
-The face-touch path is deterministic. It is not part of the ONNX class set.
+## Recognized Demo Vocabulary
 
-## Current Demo Scope
+The active public model files are checked in at:
 
-The public model files live in `public/models/`:
+- `public/models/asl_dynamic.onnx`
+- `public/models/asl_dynamic_labels.json`
 
-- `asl_dynamic.onnx`
-- `asl_dynamic_labels.json`
-
-The rollback model has 7 output classes for compatibility:
+The restored ONNX checkpoint still contains `goodbye` for compatibility:
 
 ```text
 hello, yes, no, please, help, goodbye, blank
@@ -65,40 +52,116 @@ The app intentionally exposes only:
 hello, yes, no, please, help, blank
 ```
 
-`goodbye` is suppressed in the demo runtime to keep predictions stable.
+`goodbye` is gated out in runtime to keep the hackathon demo stable.
+
+## Quick Start
+
+Prerequisites:
+
+- Node.js 20+
+- npm
+- A browser with webcam permission support
+
+Install and run:
+
+```bash
+npm install
+npm run dev
+```
+
+Open the Vite URL, grant camera permission, and use **Recognize**.
+
+## App Sections
+
+- **Home:** overview and entry points.
+- **Recognize:** live ASL demo with camera, sentence output, and speech.
+- **Dataset:** record browser-local gesture samples.
+- **Train:** train a custom TensorFlow.js model from recorded samples.
+- **Evaluate:** inspect custom model metrics.
+- **Settings:** theme, text size, contrast, and speech preferences.
+- **About:** technical project summary.
 
 ## Useful Commands
 
 ```bash
-npm run dev
-npm run build
-npm run typecheck
-npm test
+npm run dev       # local development server
+npm run build     # production build into dist/
+npm run preview   # preview the production build
+npm run typecheck # TypeScript check
+npm test          # Vitest unit tests
 ```
 
-Optional Python retraining uses the local `.venv` and `requirements-ml.txt`.
-For the narrowed demo vocabulary, use:
+## Offline Model Research
+
+Optional Python retraining uses `requirements-ml.txt`.
+
+For the narrowed demo vocabulary:
 
 ```bash
 scripts/train_demo_dynamic_model.sh
 ```
 
-Raw datasets and offline training artifacts are intentionally ignored by Git.
-Collaborators can run the app from the checked-in source, `package-lock.json`,
-and the active browser model files in `public/models/`.
+For archived expanded-vocabulary experiments:
 
-The older expanded workflow is documented for post-hackathon research, but large generated artifacts stay local and are ignored by Git.
+```bash
+scripts/train_expanded_dynamic_model.sh
+```
 
-## Key Files
+Large raw datasets and offline training artifacts are intentionally ignored by Git. Collaborators can run the web app from the checked-in source, `package-lock.json`, and the active model files in `public/models/`.
 
-- `src/hooks/useMediaPipe.ts` - camera, MediaPipe Hands, FaceMesh, face-touch detection
-- `src/ml/inferenceModel.ts` - ONNX model loading and primary-hand sequence inference
-- `src/ml/segmentationFSM.ts` - gesture confirmation/cooldown logic
-- `src/pages/RecognizePage.tsx` - live demo UI, sentence output, speech controls
-- `src/utils/landmarks.ts` - hand/face normalization and overlay drawing
+## Project Structure
+
+```text
+src/
+  hooks/useMediaPipe.ts       MediaPipe Hands + FaceMesh runtime
+  ml/inferenceModel.ts        ONNX model loading and sequence inference
+  ml/segmentationFSM.ts       gesture confirmation/cooldown state machine
+  ml/model.ts                 browser-local TensorFlow.js training model
+  pages/RecognizePage.tsx     live recognition UI
+  pages/DatasetPage.tsx       sample recording workflow
+  pages/TrainPage.tsx         custom model training workflow
+  pages/EvaluatePage.tsx      custom model evaluation
+research/                     current research notes and tradeoffs
+scripts/                      offline training entrypoints
+.claude/                      Claude agent/project guidance
+public/models/                active browser model assets
+```
+
+## Repository Policy
+
+Tracked:
+
+- app source and config
+- README, roadmap, research, and Claude guidance files
+- active ONNX model and labels required to run the app
+- optional offline training scripts
+
+Ignored:
+
+- `node_modules/`
+- `dist/`
+- `.venv/`
+- root `data/`, `dataset/`, and `artifacts/`
+- inactive model backups and local scratch files
+
+## Deployment Notes
+
+This is a static Vite app. A production deployment should run:
+
+```bash
+npm install
+npm run build
+```
+
+Then host `dist/` on any static host. The app loads MediaPipe and ONNX WASM assets in-browser and serves the active ONNX model from `public/models/` through the built app.
+
+## Privacy
+
+The app does not send webcam frames to a server. MediaPipe, ONNX inference, custom sample recording, and TensorFlow.js training all run in the browser.
 
 ## Post-Hackathon Roadmap
 
 - Revisit second-hand recognition with dedicated bimanual training data.
 - Promote face-interactive signs from heuristic labels to trained classes only after collecting balanced samples.
-- Decide after the hackathon whether the TensorFlow.js custom training workflow should remain a collaborator tool or become a live recognition mode.
+- Decide whether the TensorFlow.js custom training workflow should become a live recognition mode.
+- Add deployment-specific config if the app is published under a subpath such as GitHub Pages.
