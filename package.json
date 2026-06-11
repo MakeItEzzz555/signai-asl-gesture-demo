@@ -2,6 +2,14 @@
   "name": "signai-asl-gesture-demo",
   "version": "1.0.0",
   "description": "Hackathon demo for real-time ASL gesture recognition with one-hand ONNX inference and face-touch interactions. Fully client-side.",
+  "homepage": "https://github.com/MakeItEzzz555/signai-asl-gesture-demo#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/MakeItEzzz555/signai-asl-gesture-demo.git"
+  },
+  "bugs": {
+    "url": "https://github.com/MakeItEzzz555/signai-asl-gesture-demo/issues"
+  },
   "scripts": {
     "dev": "vite",
     "build": "vite build",
@@ -9,9 +17,23 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run"
   },
-  "keywords": [],
-  "author": "",
+  "keywords": [
+    "asl",
+    "sign-language",
+    "gesture-recognition",
+    "mediapipe",
+    "onnxruntime-web",
+    "tensorflowjs",
+    "react",
+    "vite",
+    "accessibility",
+    "hackathon"
+  ],
+  "author": "MakeItEzzz555",
   "license": "ISC",
+  "engines": {
+    "node": ">=20"
+  },
   "type": "module",
   "dependencies": {
     "@mediapipe/face_mesh": "^0.4.1633559619",
