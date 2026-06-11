@@ -1,0 +1,14 @@
+"""Global constants for dynamic ASL bundle classification."""
+
+SEQ_LEN = 64
+LANDMARK_COUNT = 21
+COORD_DIMS = 3
+FRAME_COORD_DIM = LANDMARK_COUNT * COORD_DIMS  # 63
+FRAME_FEATURE_DIM = FRAME_COORD_DIM * 2  # coords + temporal derivatives = 126
+
+CONFIDENCE_THRESHOLD = 0.85
+CONSECUTIVE_FRAMES = 10
+COOLDOWN_FRAMES = 20
+
+RANDOM_SEED = 42
+EPS = 1e-6

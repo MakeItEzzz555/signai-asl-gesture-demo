@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pnpm typecheck:*)",
+      "Bash(npx tsc:*)",
+      "Bash(npx vitest:*)",
+      "Bash(npm run:*)",
+      "Bash(curl -s http://localhost:3000/ -o /dev/null -w \"%{http_code}\" 2>/dev/null; echo; curl -s http://localhost:3001/ -o /dev/null -w \"%{http_code}\" 2>/dev/null; echo)",
+      "Bash(pnpm add:*)",
+      "Bash(npm install:*)",
+      "Bash(sleep:*)",
+      "Bash(python3:*)",
+      "Bash(grep:*)",
+      "Bash(ls:*)"
+    ]
+  }
+}

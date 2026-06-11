@@ -1,0 +1,39 @@
+# Dependencies and package manager caches
+node_modules/
+.npm/
+.pnpm-store/
+
+# Build outputs and local generated artifacts
+dist/
+coverage/
+.vite/
+
+# Python / ML local environments
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+
+# Large local datasets and offline training artifacts
+/data/
+/dataset/
+/artifacts/
+
+# Only the active browser model is required to run the app.
+/public/models/*
+!/public/models/asl_dynamic.onnx
+!/public/models/asl_dynamic_labels.json
+
+# OS/editor local files
+.DS_Store
+*.swp
+*.swo
+
+# Local scratch files from prior prompt/import sessions
+pasted_content*.txt
+src/ml/chatgpt.txt
+src/ml/inferenceModel 2.ts
+src/pages/RecognizePage 2.tsx
+
+# Nested helper repo; not required for the SignAI app runtime
+skill-prompt-generator/

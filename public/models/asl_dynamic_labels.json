@@ -1,0 +1,19 @@
+{
+  "labels": [
+    "hello",
+    "yes",
+    "no",
+    "please",
+    "help",
+    "goodbye",
+    "blank"
+  ],
+  "checkpoint_meta": {
+    "epoch": 30,
+    "metrics": {
+      "val_macro_f1": 0.7598960807614736,
+      "val_loss": 1.1240243153978688,
+      "val_blank_fpr": 0.1590909090909091
+    }
+  }
+}
