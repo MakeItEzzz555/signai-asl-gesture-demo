@@ -213,7 +213,7 @@ export default function Home() {
     <div className="min-h-screen flex flex-col" ref={heroRef}>
 
       {/* ── Hero ───────────────────────────────────────────────────── */}
-      <div className="hero-section flex-1 flex items-center justify-center px-6 py-20 relative overflow-hidden snap-start">
+      <div className="hero-section -mx-6 -mt-6 lg:-mx-8 lg:-mt-8 xl:-mx-10 xl:-mt-10 2xl:-mx-12 2xl:-mt-12 flex-1 flex items-center justify-center px-6 pt-8 pb-20 relative overflow-hidden">
 
         {/* Aurora / nebula blobs — GPU layers via transform: translateZ(0) in CSS */}
         <div className="aurora-blob aurora-blob-1" />
@@ -310,7 +310,7 @@ export default function Home() {
 
       {/* ── How it Works ───────────────────────────────────────────── */}
       <div
-        className="scroll-reveal snap-start gradient-divider px-6 py-16"
+        className="scroll-reveal gradient-divider px-6 py-16"
         ref={el => { revealRefs.current[0] = el; }}
       >
         <div className="max-w-5xl xl:max-w-6xl 2xl:max-w-7xl mx-auto">
@@ -341,7 +341,7 @@ export default function Home() {
 
       {/* ── Why This Works ─────────────────────────────────────────── */}
       <div
-        className="scroll-reveal snap-start gradient-divider bg-card/50 px-6 py-16"
+        className="scroll-reveal gradient-divider bg-card/50 px-6 py-16"
         ref={el => { revealRefs.current[1] = el; }}
       >
         <div className="max-w-6xl xl:max-w-7xl 2xl:max-w-screen-xl mx-auto">
@@ -391,7 +391,7 @@ export default function Home() {
 
       {/* ── Technology Stack ───────────────────────────────────────── */}
       <div
-        className="scroll-reveal snap-start gradient-divider px-6 py-12"
+        className="scroll-reveal gradient-divider px-6 py-12"
         ref={el => { revealRefs.current[3] = el; }}
       >
         <div className="max-w-6xl xl:max-w-7xl 2xl:max-w-screen-xl mx-auto">
