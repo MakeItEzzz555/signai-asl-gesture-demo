@@ -9,10 +9,11 @@
  * - About / system info
  */
 
-import { Sun, Moon, Contrast, Type, Volume2, VolumeX, Mic, Info } from 'lucide-react';
+import { Sun, Moon, Contrast, Type, Volume2, VolumeX, Mic, Info, Globe } from 'lucide-react';
 import { useApp } from '../contexts/AppContext';
 import { useTheme } from '../contexts/ThemeContext';
 import { cn } from '@/lib/utils';
+import LanguageSelector from '../components/LanguageSelector';
 
 function SettingRow({ icon: Icon, title, description, children }: {
   icon: React.ElementType;
@@ -117,6 +118,23 @@ export default function SettingsPage() {
           <Toggle
             checked={accessibility.highContrast}
             onChange={() => setAccessibility({ highContrast: !accessibility.highContrast })}
+          />
+        </SettingRow>
+      </div>
+
+      {/* ── Language ──────────────────────────────────────────────── */}
+      <div className="bg-card border border-border rounded-xl p-5">
+        <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide mb-1">
+          Language
+        </h2>
+        <SettingRow
+          icon={Globe}
+          title="Output Language"
+          description="Translate recognized gesture labels into your preferred language"
+        >
+          <LanguageSelector
+            value={accessibility.language}
+            onChange={code => setAccessibility({ language: code })}
           />
         </SettingRow>
       </div>

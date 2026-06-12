@@ -10,6 +10,7 @@
  */
 
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import { type LanguageCode } from '../i18n/translations';
 
 export type TextSize = 'normal' | 'large' | 'xl';
 
@@ -18,6 +19,7 @@ export interface Accessibility {
   textSize: TextSize;
   audioEnabled: boolean;
   autoSpeak: boolean;
+  language: LanguageCode;
 }
 
 export interface GestureSample {
@@ -98,6 +100,7 @@ const DEFAULT_ACCESSIBILITY: Accessibility = {
   textSize: 'normal',
   audioEnabled: true,
   autoSpeak: true,
+  language: 'en',
 };
 
 const DEFAULT_TRAINING_CONFIG: TrainingConfig = {
@@ -165,6 +168,24 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setIsModelTrained(false);
     setEvaluationMetrics(null);
   }, []);
+
+  // Restore accessibility settings from localStorage on first mount.
+  useEffect(() => {
+    const stored = localStorage.getItem('signai:accessibility');
+    if (stored) {
+      try {
+        const parsed = JSON.parse(stored) as Partial<Accessibility>;
+        setAccessibilityState(prev => ({ ...prev, ...parsed }));
+      } catch {
+        // ignore malformed data
+      }
+    }
+  }, []);
+
+  // Persist accessibility settings to localStorage on every change.
+  useEffect(() => {
+    localStorage.setItem('signai:accessibility', JSON.stringify(accessibility));
+  }, [accessibility]);
 
   useEffect(() => {
     const root = document.documentElement;

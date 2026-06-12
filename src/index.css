@@ -166,6 +166,20 @@
     }
   }
 
+  @media (min-width: 1280px) {
+    .container {
+      max-width: 1536px;
+    }
+  }
+
+  @media (min-width: 1536px) {
+    .container {
+      padding-left: 2.5rem;
+      padding-right: 2.5rem;
+      max-width: 1920px;
+    }
+  }
+
   /* Glow effects */
   .glow-cyan {
     box-shadow: 0 0 20px rgba(0, 217, 255, 0.3), inset 0 0 20px rgba(0, 217, 255, 0.1);
@@ -290,4 +304,502 @@
   border-top-color: var(--primary);
   border-radius: 50%;
   animation: spin 1s linear infinite;
+}
+
+/* ─── Global scroll behaviour ───────────────────────────────── */
+html, body {
+  scroll-behavior: smooth;
+}
+
+/* ─── Scanline overlay ───────────────────────────────────────── */
+body::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  background: repeating-linear-gradient(
+    0deg,
+    transparent 0,
+    transparent 2px,
+    rgba(255, 255, 255, 0.018) 2px,
+    rgba(255, 255, 255, 0.018) 4px
+  );
+  pointer-events: none;
+  z-index: 9998;
+}
+
+/* ─── Aurora / nebula blobs ──────────────────────────────────── */
+.aurora-blob {
+  position: absolute;
+  border-radius: 50%;
+  filter: blur(72px);
+  pointer-events: none;
+  will-change: transform;
+  transform: translateZ(0);
+}
+.aurora-blob-1 {
+  width: 680px; height: 680px;
+  background: radial-gradient(circle, rgba(0,217,255,0.22) 0%, transparent 70%);
+  top: -240px; left: -180px;
+}
+.aurora-blob-2 {
+  width: 580px; height: 580px;
+  background: radial-gradient(circle, rgba(124,58,237,0.18) 0%, transparent 70%);
+  top: -120px; right: -140px;
+}
+.aurora-blob-3 {
+  width: 480px; height: 480px;
+  background: radial-gradient(circle, rgba(30,64,175,0.15) 0%, transparent 70%);
+  bottom: -80px; left: 25%;
+}
+.aurora-blob-4 {
+  width: 360px; height: 360px;
+  background: radial-gradient(circle, rgba(0,217,255,0.12) 0%, transparent 70%);
+  top: 30%; right: 8%;
+}
+
+/* ─── Hero dot grid ──────────────────────────────────────────── */
+.dot-grid {
+  position: absolute;
+  inset: 0;
+  background-image: radial-gradient(circle, rgba(0,217,255,0.2) 1px, transparent 1px);
+  background-size: 34px 34px;
+  pointer-events: none;
+  mask-image: radial-gradient(ellipse 80% 80% at 50% 50%, black 40%, transparent 100%);
+}
+
+/* ─── Gradient text ──────────────────────────────────────────── */
+.text-gradient-animate {
+  background: linear-gradient(90deg, #00e5ff 0%, #bf5fff 28%, #3b82f6 56%, #00e5ff 100%);
+  background-size: 300% auto;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  color: transparent;
+  will-change: background-position;
+}
+
+/* ─── Card hover ─────────────────────────────────────────────── */
+.card-hover {
+  transition: box-shadow 0.3s ease, border-color 0.3s ease;
+}
+.card-hover:hover {
+  box-shadow: 0 8px 40px rgba(0, 217, 255, 0.2), 0 0 0 1px rgba(0,217,255,0.3);
+  border-color: rgba(0, 217, 255, 0.5);
+}
+
+/* ─── Step card premium gradient border ──────────────────────── */
+.step-gradient-border {
+  border: 1.5px solid rgba(0,217,255,0.35);
+  box-shadow: 0 0 0 0 transparent;
+  transition: border-color 0.3s ease, box-shadow 0.3s ease;
+}
+.step-gradient-border:hover {
+  border-color: rgba(0,217,255,0.7);
+  box-shadow: 0 0 28px rgba(0,217,255,0.25), inset 0 0 20px rgba(0,217,255,0.04);
+}
+
+/* ─── Camera feed animated gradient border ───────────────────── */
+.cam-gradient-border {
+  border: 2px solid rgba(0,217,255,0.4);
+  box-shadow:
+    0 0 0 1px rgba(124,58,237,0.15),
+    0 0 40px rgba(0,217,255,0.25),
+    inset 0 0 20px rgba(0,217,255,0.03);
+}
+
+/* ─── Panel top accent ───────────────────────────────────────── */
+.panel-accent {
+  position: relative;
+}
+.panel-accent::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 12%;
+  right: 12%;
+  height: 1.5px;
+  background: linear-gradient(90deg, transparent, rgba(0,217,255,0.9), transparent);
+  border-radius: 9999px;
+  pointer-events: none;
+}
+
+/* ─── Dramatic CTA button ────────────────────────────────────── */
+.btn-glow {
+  background: linear-gradient(135deg, #00d9ff 0%, #0891b2 40%, #7c3aed 100%);
+  background-size: 200% auto;
+  color: #ffffff;
+  font-weight: 700;
+  position: relative;
+  overflow: hidden;
+  transition: box-shadow 0.2s ease, background-position 0.4s ease;
+  box-shadow:
+    0 0 0 2px rgba(0,217,255,0.25),
+    0 0 40px rgba(0,217,255,0.5),
+    0 0 80px rgba(0,217,255,0.2),
+    0 10px 40px rgba(0,0,0,0.5);
+}
+.btn-glow:hover {
+  background-position: right center;
+  box-shadow:
+    0 0 0 2px rgba(0,217,255,0.5),
+    0 0 60px rgba(0,217,255,0.7),
+    0 0 120px rgba(124,58,237,0.3),
+    0 12px 50px rgba(0,0,0,0.6);
+}
+/* Moving shine streak — left is static, only transform animates */
+.btn-glow::after {
+  content: '';
+  position: absolute;
+  top: -50%;
+  left: 0;
+  width: 25%;
+  height: 200%;
+  background: linear-gradient(105deg, transparent, rgba(255,255,255,0.4), transparent);
+  transform: translateX(-300%) skewX(-18deg);
+  pointer-events: none;
+}
+
+/* ─── Shimmer sweep ──────────────────────────────────────────── */
+.shimmer {
+  position: relative;
+  overflow: hidden;
+}
+.shimmer::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    105deg,
+    transparent 40%,
+    rgba(255, 255, 255, 0.2) 50%,
+    transparent 60%
+  );
+  transform: translateX(-100%);
+  pointer-events: none;
+}
+
+/* ─── Floating particle ──────────────────────────────────────── */
+.particle {
+  position: absolute;
+  border-radius: 50%;
+  background: rgba(0, 217, 255, 0.5);
+  pointer-events: none;
+  opacity: 0;
+}
+
+/* ─── Radar ring ping ────────────────────────────────────────── */
+.ring-ping {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.ring-ping::after {
+  content: '';
+  position: absolute;
+  inset: -4px;
+  border-radius: 50%;
+  border: 1.5px solid rgba(0, 217, 255, 0.65);
+}
+
+/* ─── Sidebar — gradient bg + glowing cyan top border ───────── */
+.sidebar-depth {
+  background: linear-gradient(180deg, #0f1419 0%, #0a0e14 100%);
+  border-top: 2px solid #00d9ff;
+  box-shadow: 0 2px 50px rgba(0,217,255,0.3), inset 0 -1px 0 rgba(0,217,255,0.06);
+}
+.sidebar-depth::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 45%;
+  background: linear-gradient(to bottom, transparent, rgba(0, 217, 255, 0.05));
+  pointer-events: none;
+  z-index: 0;
+}
+
+/* ─── Nav active bar ─────────────────────────────────────────── */
+.nav-item {
+  position: relative;
+}
+.nav-item::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 10%;
+  bottom: 10%;
+  width: 3px;
+  background: linear-gradient(to bottom, #00d9ff, #7c3aed);
+  border-radius: 0 2px 2px 0;
+  box-shadow: 0 0 10px rgba(0,217,255,0.9), 0 0 20px rgba(0,217,255,0.4);
+  transform: scaleY(0);
+  transform-origin: center;
+  transition: transform 0.22s ease;
+}
+.nav-item.nav-active::before {
+  transform: scaleY(1);
+}
+
+/* ─── Confidence bar shine ───────────────────────────────────── */
+.confidence-bar-shine {
+  position: relative;
+  overflow: hidden;
+}
+.confidence-bar-shine::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.55) 50%, transparent 100%);
+  pointer-events: none;
+}
+
+/* ─── Flag button selected glow ──────────────────────────────── */
+.flag-selected {
+  box-shadow: 0 0 18px rgba(0,217,255,0.65), 0 0 6px rgba(0,217,255,0.35) !important;
+  border-color: rgba(0,217,255,0.9) !important;
+}
+
+/* ─── Hero radial glow (legacy fallback) ─────────────────────── */
+.hero-glow {
+  position: absolute;
+  inset: -20%;
+  background: radial-gradient(ellipse at center, rgba(0, 217, 255, 0.06) 0%, transparent 65%);
+  pointer-events: none;
+}
+
+/* ─── Page enter ─────────────────────────────────────────────── */
+.page-enter {
+  animation: pageEnter 0.5s ease-out both;
+}
+
+/* ════════════════════════════════════════════════════════════════
+   Motion animations — all wrapped in prefers-reduced-motion
+   ════════════════════════════════════════════════════════════════ */
+@media (prefers-reduced-motion: no-preference) {
+
+  @keyframes auroraFloat1 {
+    0%   { transform: translate(0, 0) scale(1);      opacity: 1;   }
+    100% { transform: translate(90px, 45px) scale(1.25); opacity: 0.65; }
+  }
+  @keyframes auroraFloat2 {
+    0%   { transform: translate(0, 0) scale(1);       opacity: 0.9; }
+    100% { transform: translate(-75px, 65px) scale(1.2); opacity: 0.55; }
+  }
+  @keyframes auroraFloat3 {
+    0%   { transform: translate(0, 0) scale(1);     opacity: 0.8; }
+    100% { transform: translate(65px, -50px) scale(1.15); opacity: 0.5; }
+  }
+  @keyframes auroraFloat4 {
+    0%   { transform: translate(0, 0) scale(1);     opacity: 0.7; }
+    100% { transform: translate(-55px, 35px) scale(1.3); opacity: 0.4; }
+  }
+
+  .aurora-blob-1 { animation: auroraFloat1 9s  ease-in-out infinite alternate; }
+  .aurora-blob-2 { animation: auroraFloat2 11s ease-in-out infinite alternate; }
+  .aurora-blob-3 { animation: auroraFloat3 8s  ease-in-out infinite alternate; }
+  .aurora-blob-4 { animation: auroraFloat4 13s ease-in-out infinite alternate; }
+
+  @keyframes glowPulse {
+    0%, 100% { box-shadow: 0 0 0 0 transparent; }
+    50%       { box-shadow: 0 0 28px 8px rgba(0,217,255,0.6); }
+  }
+  .glow-pulse {
+    animation: glowPulse 2s ease-in-out infinite;
+  }
+
+  @keyframes gradientMove {
+    from { background-position: 0% center; }
+    to   { background-position: 300% center; }
+  }
+  .text-gradient-animate {
+    animation: gradientMove 2s linear infinite;
+  }
+
+  @keyframes floatUp {
+    0%   { transform: translateY(0) scale(1);        opacity: 0;  }
+    15%  { opacity: 0.7; }
+    100% { transform: translateY(-110px) scale(0.4); opacity: 0; }
+  }
+  .particle {
+    animation: floatUp var(--float-duration, 5s) ease-in-out infinite;
+    animation-delay: var(--float-delay, 0s);
+  }
+
+  @keyframes ringPing {
+    0%   { transform: scale(1); opacity: 0.7; }
+    100% { transform: scale(3.2); opacity: 0; }
+  }
+  .ring-ping::after {
+    animation: ringPing 2s ease-out infinite;
+  }
+
+  @keyframes pageEnter {
+    from { opacity: 0; transform: translateY(18px); }
+    to   { opacity: 1; transform: translateY(0);    }
+  }
+  .page-enter {
+    animation: pageEnter 0.5s ease-out both;
+  }
+
+  @keyframes camBorderCycle {
+    0%, 100% {
+      border-color: rgba(0,217,255,0.7);
+      box-shadow: 0 0 0 1px rgba(0,217,255,0.2), 0 0 50px rgba(0,217,255,0.3), inset 0 0 20px rgba(0,217,255,0.04);
+    }
+    33% {
+      border-color: rgba(124,58,237,0.6);
+      box-shadow: 0 0 0 1px rgba(124,58,237,0.2), 0 0 50px rgba(124,58,237,0.25), inset 0 0 20px rgba(124,58,237,0.03);
+    }
+    66% {
+      border-color: rgba(30,64,175,0.5);
+      box-shadow: 0 0 0 1px rgba(30,64,175,0.2), 0 0 40px rgba(30,64,175,0.2), inset 0 0 20px rgba(30,64,175,0.03);
+    }
+  }
+  .cam-gradient-border {
+    animation: camBorderCycle 4s ease-in-out infinite;
+  }
+
+  @keyframes stepBorderCycle {
+    0%, 100% { border-color: rgba(0,217,255,0.5);  box-shadow: 0 0 20px rgba(0,217,255,0.18); }
+    50%       { border-color: rgba(124,58,237,0.5); box-shadow: 0 0 20px rgba(124,58,237,0.18); }
+  }
+  .step-gradient-border {
+    animation: stepBorderCycle 4s ease-in-out infinite;
+  }
+  .step-gradient-border:hover {
+    animation-play-state: paused;
+  }
+
+  @keyframes btnGlowPulse {
+    0%, 100% {
+      box-shadow: 0 0 0 2px rgba(0,217,255,0.3), 0 0 40px rgba(0,217,255,0.5), 0 0 80px rgba(0,217,255,0.2), 0 10px 40px rgba(0,0,0,0.5);
+    }
+    50% {
+      box-shadow: 0 0 0 3px rgba(0,217,255,0.5), 0 0 60px rgba(124,58,237,0.5), 0 0 120px rgba(0,217,255,0.25), 0 10px 40px rgba(0,0,0,0.5);
+    }
+  }
+  .btn-glow {
+    animation: btnGlowPulse 2.5s ease-in-out infinite;
+  }
+
+  @keyframes btnShineStreak {
+    0%   { transform: translateX(-300%) skewX(-18deg); opacity: 0; }
+    8%   { opacity: 1; }
+    40%  { transform: translateX(600%) skewX(-18deg); opacity: 0; }
+    100% { transform: translateX(600%) skewX(-18deg); opacity: 0; }
+  }
+  .btn-glow::after {
+    animation: btnShineStreak 3s ease-in-out infinite;
+    animation-delay: 1.2s;
+  }
+
+  @keyframes barShine {
+    0%   { transform: translateX(-200%); }
+    100% { transform: translateX(200%); }
+  }
+  .confidence-bar-shine::after {
+    animation: barShine 1.6s ease-in-out infinite;
+  }
+
+  .card-hover {
+    transition: transform 0.3s ease, box-shadow 0.3s ease, border-color 0.3s ease;
+  }
+  .card-hover:hover {
+    transform: translateY(-8px);
+    box-shadow: 0 24px 64px rgba(0,217,255,0.22), 0 0 0 1px rgba(0,217,255,0.45);
+  }
+
+  .btn-glow {
+    transition: transform 0.2s ease, background-position 0.4s ease;
+  }
+  .btn-glow:hover  { transform: scale(1.05); }
+  .btn-glow:active { transform: scale(0.96); }
+
+  .shimmer:hover::after {
+    transform: translateX(100%);
+    transition: transform 0.45s ease;
+  }
+}
+
+/* ─── Hero section isolation ─────────────────────────────────── */
+.hero-section {
+  contain: paint layout;
+  isolation: isolate;
+}
+
+/* ─── Scroll progress bar (uses scaleX, GPU composited) ─────── */
+.scroll-progress {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, #00d9ff 0%, #7c3aed 50%, #00d9ff 100%);
+  z-index: 9999;
+  pointer-events: none;
+  transform: scaleX(0);
+  transform-origin: left center;
+  will-change: transform;
+}
+
+/* ─── Scroll-reveal (IntersectionObserver) ───────────────────── */
+.scroll-reveal {
+  opacity: 0;
+  transform: translateY(32px);
+  transition: opacity 0.65s ease, transform 0.65s ease;
+  will-change: opacity, transform;
+}
+.scroll-reveal.visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+/* ─── Stagger children inside a scroll-reveal parent ────────── */
+/* Uses animation (not transition) so card-hover transitions are unaffected */
+@keyframes staggerItemIn {
+  from { opacity: 0; transform: translateY(24px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.stagger-children > * {
+  opacity: 0;
+  transform: translateY(24px);
+}
+.stagger-children.visible > *:nth-child(1) { animation: staggerItemIn 0.55s 0ms   ease forwards; }
+.stagger-children.visible > *:nth-child(2) { animation: staggerItemIn 0.55s 85ms  ease forwards; }
+.stagger-children.visible > *:nth-child(3) { animation: staggerItemIn 0.55s 170ms ease forwards; }
+.stagger-children.visible > *:nth-child(4) { animation: staggerItemIn 0.55s 255ms ease forwards; }
+.stagger-children.visible > *:nth-child(5) { animation: staggerItemIn 0.55s 340ms ease forwards; }
+
+/* ─── Gradient section divider ───────────────────────────────── */
+.gradient-divider {
+  position: relative;
+}
+.gradient-divider::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(0,217,255,0.55) 35%, rgba(124,58,237,0.4) 65%, transparent);
+  pointer-events: none;
+}
+
+/* ─── Reduced-motion overrides ───────────────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+  .scroll-reveal,
+  .scroll-reveal.visible {
+    opacity: 1;
+    transform: none;
+    transition: none;
+    will-change: auto;
+  }
+  .stagger-children > *,
+  .stagger-children.visible > * {
+    opacity: 1;
+    transform: none;
+    animation: none !important;
+  }
 }
