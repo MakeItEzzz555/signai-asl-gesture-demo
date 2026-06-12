@@ -9,7 +9,7 @@
  *
  */
 
-import { useState, useReducer, useCallback, useRef, useEffect } from 'react';
+import { useState, useReducer, useCallback, useRef, useEffect, useMemo } from 'react';
 import {
   Camera,
   Volume2,
@@ -20,6 +20,7 @@ import {
   CheckCircle,
   Loader,
   X,
+  BookOpen,
 } from 'lucide-react';
 import { useApp } from '../contexts/AppContext';
 import { useMediaPipe, type FaceRegion, type HandFaceInteraction } from '../hooks/useMediaPipe';
@@ -37,6 +38,9 @@ import {
   type Landmark,
 } from '../utils/landmarks';
 import { cn } from '@/lib/utils';
+import { translateGesture } from '../i18n/translations';
+import GestureGuide from '../components/GestureGuide';
+import LanguageSelector from '../components/LanguageSelector';
 
 const CONFIDENCE_THRESHOLD = Math.round(DEFAULT_SEGMENTATION_CONFIG.confidenceThreshold * 100);
 const CONFIRMATION_FRAMES = DEFAULT_SEGMENTATION_CONFIG.confirmFrames;
@@ -222,9 +226,10 @@ function predictionReducer(state: PredictionState, action: PredictionAction): Pr
 
 export default function RecognizePage() {
   const { accessibility, setAccessibility, modelReady, modelLoading, modelError } = useApp();
+  const language = accessibility.language;
   const [pred, dispatch] = useReducer(predictionReducer, INITIAL_PRED_STATE);
   const [recognizedWords, setRecognizedWords] = useState<RecognizedWord[]>([]);
-  const [sentence, setSentence] = useState('');
+  const [guideOpen, setGuideOpen] = useState(false);
   const rightBusyRef = useRef(false);
   const rightLiveGestureRef = useRef<string | null>(null);
 
@@ -232,16 +237,13 @@ export default function RecognizePage() {
   // without needing to recreate the callback on every change.
   const autoSpeakRef = useRef(accessibility.autoSpeak);
   const audioEnabledRef = useRef(accessibility.audioEnabled);
+  const languageRef = useRef(accessibility.language);
 
-  // Stable setters (React guarantees identity, but captured in refs to be
-  // explicit about the empty-deps contract on onLandmarks).
-  const setSentenceRef = useRef(setSentence);
+  // Stable setter (React guarantees identity, captured in ref for the
+  // empty-deps contract on onLandmarks).
   const setRecognizedWordsRef = useRef(setRecognizedWords);
 
   // Face-interaction priority gate.
-  // faceActiveRef        — true while raw hand-face contact is detected or held.
-  // emittedFaceRegionRef — last confirmed region emitted during the active contact.
-  // faceHoldRef          — countdown before faceActiveRef returns to false.
   const faceActiveRef        = useRef(false);
   const emittedFaceRegionRef = useRef<FaceRegion | null>(null);
   const faceHoldRef          = useRef(0);
@@ -249,7 +251,17 @@ export default function RecognizePage() {
   useEffect(() => {
     autoSpeakRef.current = accessibility.autoSpeak;
     audioEnabledRef.current = accessibility.audioEnabled;
-  }, [accessibility.autoSpeak, accessibility.audioEnabled]);
+    languageRef.current = accessibility.language;
+  }, [accessibility.autoSpeak, accessibility.audioEnabled, accessibility.language]);
+
+  // Sentence is derived from recognizedWords (stored in English) translated
+  // at render time — switching language instantly retranslates the whole output.
+  const displaySentence = useMemo(
+    () => [...recognizedWords].reverse()
+      .map(w => translateGesture(w.word, language))
+      .join(' '),
+    [recognizedWords, language],
+  );
 
   const onLandmarks = useCallback((
     features: number[],
@@ -265,21 +277,19 @@ export default function RecognizePage() {
     const faceContact = candidateInteraction ?? interaction ?? null;
 
     // ── Face-interaction priority gate (synchronous) ─────────────────────────
-    // Runs synchronously here — before any async ONNX promise is started —
-    // so faceActiveRef.current is already correct when the .then() resolves.
     if (faceContact) {
       faceActiveRef.current = true;
       faceHoldRef.current = FACE_INTERACTION_HOLD;
 
       if (interaction && emittedFaceRegionRef.current === null) {
-        // Confirmed interaction: emit once for the first stable region during this contact.
         const combinedLabel = getCombinedGestureLabel(rightLiveGestureRef.current, interaction.faceRegion);
-        if (autoSpeakRef.current && audioEnabledRef.current) speak(combinedLabel);
+        if (autoSpeakRef.current && audioEnabledRef.current) {
+          speak(translateGesture(combinedLabel, languageRef.current));
+        }
         setRecognizedWordsRef.current(prev => [
           { word: combinedLabel, confidence: 100, timestamp: Date.now() },
           ...prev.slice(0, 49),
         ]);
-        setSentenceRef.current(prev => `${prev}${combinedLabel} `);
         emittedFaceRegionRef.current = interaction.faceRegion;
       }
     } else {
@@ -308,8 +318,7 @@ export default function RecognizePage() {
           const guardedResult = allowed ? mappedResult : { ...mappedResult, emittedWord: null };
           dispatch({ type: 'UPDATE_RIGHT', result: guardedResult });
           if (guardedResult.emittedWord) {
-            // Suppress hand-only output when a hand-face interaction is active
-            // (face gesture takes priority; combined label was already emitted).
+            // Suppress hand-only output when a hand-face interaction is active.
             const suppressHandOnly = faceActiveRef.current;
             if (!suppressHandOnly) {
               const word = guardedResult.emittedWord;
@@ -318,8 +327,9 @@ export default function RecognizePage() {
                 { word, confidence, timestamp: Date.now() },
                 ...prev.slice(0, 49),
               ]);
-              setSentenceRef.current(prev => `${prev}${word} `);
-              if (autoSpeakRef.current && audioEnabledRef.current) speak(word);
+              if (autoSpeakRef.current && audioEnabledRef.current) {
+                speak(translateGesture(word, languageRef.current));
+              }
             }
           }
         })
@@ -348,9 +358,12 @@ export default function RecognizePage() {
 
   const handleSpeak = useCallback(() => {
     if (!accessibility.audioEnabled) return;
-    const text = sentence.trim() || pred.currentGesture;
+    const currentTranslated = pred.currentGesture
+      ? translateGesture(pred.currentGesture, accessibility.language)
+      : null;
+    const text = displaySentence.trim() || currentTranslated;
     if (text) speak(text);
-  }, [accessibility.audioEnabled, sentence, pred.currentGesture]);
+  }, [accessibility.audioEnabled, accessibility.language, displaySentence, pred.currentGesture]);
 
   useEffect(() => {
     return () => {
@@ -366,8 +379,8 @@ export default function RecognizePage() {
       : 'text-destructive';
 
   return (
-    <div className="max-w-6xl space-y-6">
-      <div className="flex items-start justify-between">
+    <div className="w-full space-y-6">
+      <div className="flex items-start justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold text-foreground" style={{ fontFamily: 'Space Grotesk' }}>
             Dynamic ASL Gesture Recognition
@@ -376,18 +389,26 @@ export default function RecognizePage() {
             Detects one-hand gesture bundles ({BUFFER_FRAMES} frames) for: hello, yes, no, please, help, plus face-touch interactions.
           </p>
         </div>
-        {modelError && (
-          <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-destructive/10 border border-destructive/20">
-            <AlertCircle className="w-4 h-4 text-destructive" />
-            <p className="text-xs text-destructive">{modelError}</p>
-          </div>
-        )}
+
+        {/* Top-right: language selector + model error */}
+        <div className="flex flex-col items-end gap-2 flex-shrink-0">
+          <LanguageSelector
+            value={language}
+            onChange={code => setAccessibility({ language: code })}
+          />
+          {modelError && (
+            <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-destructive/10 border border-destructive/20">
+              <AlertCircle className="w-4 h-4 text-destructive" />
+              <p className="text-xs text-destructive">{modelError}</p>
+            </div>
+          )}
+        </div>
       </div>
 
-      <div className="grid grid-cols-5 gap-6">
+      <div className="grid grid-cols-5 gap-6 xl:gap-8">
         {/* Left: Camera Feed */}
         <div className="col-span-3 space-y-4">
-          <div className="bg-card border border-border rounded-xl overflow-hidden">
+          <div className="cam-gradient-border bg-card rounded-xl overflow-hidden">
             <div className="flex items-center justify-between px-4 py-3 border-b border-border">
               <div className="flex items-center gap-2">
                 <Camera className="w-4 h-4 text-primary" />
@@ -459,7 +480,7 @@ export default function RecognizePage() {
                       ? <CheckCircle className="w-4 h-4 text-primary" />
                       : <div className="w-4 h-4 border-2 border-muted-foreground border-t-transparent rounded-full animate-spin" />}
                     <span className="text-sm font-bold text-foreground uppercase" style={{ fontFamily: 'Space Grotesk' }}>
-                      {pred.currentGesture}
+                      {translateGesture(pred.currentGesture, language)}
                     </span>
                   </div>
                   <div className="text-right">
@@ -537,6 +558,14 @@ export default function RecognizePage() {
               )}
 
               <button
+                onClick={() => setGuideOpen(true)}
+                className="flex items-center gap-2 px-4 py-2 rounded-lg bg-muted text-foreground border border-border text-sm font-medium hover:bg-accent transition-colors"
+              >
+                <BookOpen className="w-4 h-4" />
+                Gesture Guide
+              </button>
+
+              <button
                 onClick={() => setAccessibility({ autoSpeak: !accessibility.autoSpeak })}
                 className={cn(
                   'flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all border',
@@ -557,7 +586,7 @@ export default function RecognizePage() {
 
               <button
                 onClick={handleSpeak}
-                disabled={!pred.currentGesture && sentence.trim().length === 0}
+                disabled={!pred.currentGesture && displaySentence.trim().length === 0}
                 className="flex items-center gap-2 px-3 py-2 rounded-lg bg-muted text-foreground border border-border text-sm hover:bg-accent transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 {accessibility.audioEnabled ? <Volume2 className="w-4 h-4" /> : <VolumeX className="w-4 h-4" />}
@@ -570,14 +599,15 @@ export default function RecognizePage() {
         <div className="col-span-2 space-y-4">
 
           {/* ── Live Text Output (≥80% confidence threshold) ───────────────── */}
-          <div className="bg-card border border-border rounded-xl p-4">
+          <div className="panel-accent bg-card border border-border rounded-xl p-4">
             <p className="text-xs font-mono text-muted-foreground mb-3">LIVE GESTURE OUTPUT</p>
             <div className="space-y-2 font-mono text-sm">
               <div className="flex items-center gap-3">
                 <span className="text-muted-foreground text-xs w-24 shrink-0">Primary Hand:</span>
                 {camState.rawLandmarks && pred.liveGesture && pred.liveConfidence >= 80 ? (
                   <span className="text-primary font-bold uppercase">
-                    {pred.liveGesture} <span className="font-normal text-xs">({Math.round(pred.liveConfidence)}%)</span>
+                    {translateGesture(pred.liveGesture, language)}{' '}
+                    <span className="font-normal text-xs">({Math.round(pred.liveConfidence)}%)</span>
                   </span>
                 ) : (
                   <span className="text-muted-foreground text-xs">
@@ -589,7 +619,7 @@ export default function RecognizePage() {
           </div>
 
           {/* ── Hand Status (detection + live gesture) ─────────────────────── */}
-          <div className="bg-card border border-border rounded-xl p-4 space-y-3">
+          <div className="panel-accent bg-card border border-border rounded-xl p-4 space-y-3">
             <p className="text-xs font-mono text-muted-foreground">HAND DETECTION</p>
 
             <div className="flex items-center justify-between">
@@ -605,7 +635,9 @@ export default function RecognizePage() {
                   'text-sm font-bold uppercase',
                   pred.liveGesture ? 'text-primary' : 'text-muted-foreground',
                 )} style={{ fontFamily: 'Space Grotesk' }}>
-                  {camState.rawLandmarks ? (pred.liveGesture ?? '…') : 'Not detected'}
+                  {camState.rawLandmarks
+                    ? (pred.liveGesture ? translateGesture(pred.liveGesture, language) : '…')
+                    : 'Not detected'}
                 </span>
                 {camState.rawLandmarks && pred.liveConfidence > 0 && (
                   <p className="text-[10px] font-mono text-muted-foreground">
@@ -627,9 +659,9 @@ export default function RecognizePage() {
             <div className="bg-card border border-yellow-500/30 rounded-xl p-4 space-y-2">
               <p className="text-xs font-mono text-yellow-400">COMBINED GESTURE (HAND-FACE)</p>
               <div className="text-2xl font-bold uppercase text-yellow-400" style={{ fontFamily: 'Space Grotesk' }}>
-                {getCombinedGestureLabel(
-                  pred.liveGesture,
-                  camState.handFaceInteraction.faceRegion,
+                {translateGesture(
+                  getCombinedGestureLabel(pred.liveGesture, camState.handFaceInteraction.faceRegion),
+                  language,
                 )}
               </div>
               <div className="grid grid-cols-2 gap-2 text-[11px] font-mono">
@@ -647,8 +679,8 @@ export default function RecognizePage() {
 
           {/* ── Detected Gesture ───────────────────────────────────────────── */}
           <div className={cn(
-            'bg-card border rounded-xl p-4 transition-all duration-300',
-            pred.isConfirmed ? 'border-primary/30' : 'border-border',
+            'panel-accent bg-card border rounded-xl p-4 transition-all duration-300',
+            pred.isConfirmed ? 'border-primary/40' : 'border-border',
           )}>
             <p className="text-xs font-mono text-muted-foreground mb-3">DETECTED GESTURES</p>
 
@@ -661,7 +693,7 @@ export default function RecognizePage() {
                     ? pred.isConfirmed ? 'text-primary' : 'text-foreground'
                     : 'text-muted-foreground',
                 )} style={{ fontFamily: 'Space Grotesk' }}>
-                  {pred.currentGesture ?? '—'}
+                  {pred.currentGesture ? translateGesture(pred.currentGesture, language) : '—'}
                 </span>
               </div>
               {/* Confidence bar */}
@@ -670,14 +702,22 @@ export default function RecognizePage() {
                   <span className="text-muted-foreground">Confidence</span>
                   <span className={confidenceColor}>{pred.currentConfidence}%</span>
                 </div>
-                <div className="h-1.5 bg-muted rounded-full overflow-hidden">
+                <div className="h-3 bg-muted/60 rounded-full overflow-hidden border border-muted/30">
                   <div
-                    className={cn(
-                      'h-full rounded-full confidence-bar transition-all',
-                      pred.currentConfidence >= 90 ? 'bg-success' :
-                      pred.currentConfidence >= 75 ? 'bg-warning' : 'bg-primary/50',
-                    )}
-                    style={{ width: `${Math.max(0, Math.min(100, pred.currentConfidence))}%` }}
+                    className="confidence-bar-shine h-full rounded-full transition-all duration-200"
+                    style={{
+                      width: `${Math.max(0, Math.min(100, pred.currentConfidence))}%`,
+                      background: pred.currentConfidence >= 90
+                        ? 'linear-gradient(90deg, #059669, #10b981, #34d399)'
+                        : pred.currentConfidence >= 75
+                          ? 'linear-gradient(90deg, #d97706, #f59e0b, #fcd34d)'
+                          : 'linear-gradient(90deg, #dc2626, #ef4444, #ff6b7a)',
+                      boxShadow: pred.currentConfidence >= 90
+                        ? '0 0 14px rgba(16,185,129,0.85), 0 0 5px rgba(52,211,153,0.5)'
+                        : pred.currentConfidence >= 75
+                          ? '0 0 14px rgba(245,158,11,0.85), 0 0 5px rgba(252,211,77,0.5)'
+                          : '0 0 12px rgba(239,68,68,0.7), 0 0 4px rgba(255,107,122,0.4)',
+                    }}
                   />
                 </div>
               </div>
@@ -706,7 +746,10 @@ export default function RecognizePage() {
               {pred.pendingWord && (
                 <div className="mt-2 space-y-1.5">
                   <p className="text-[11px] font-mono text-warning">
-                    Added: <span className="font-bold uppercase">{pred.pendingWord}</span>{' '}
+                    Added:{' '}
+                    <span className="font-bold uppercase">
+                      {translateGesture(pred.pendingWord, language)}
+                    </span>{' '}
                     <span className="opacity-70">({pred.pendingConfidence}%)</span>
                   </p>
                   <div className="flex gap-1.5">
@@ -754,7 +797,7 @@ export default function RecognizePage() {
             </div>
           </div>
 
-          <div className="bg-card border border-border rounded-xl p-4">
+          <div className="panel-accent bg-card border border-border rounded-xl p-4">
             <div className="flex items-center justify-between mb-3">
               <p className="text-xs font-mono text-muted-foreground">TOP PREDICTIONS</p>
             </div>
@@ -776,7 +819,7 @@ export default function RecognizePage() {
                       'text-sm font-bold uppercase',
                       i === 0 ? 'text-primary' : 'text-foreground',
                     )}>
-                      {item.label}
+                      {translateGesture(item.label, language)}
                     </span>
                     <span className="text-xs font-mono text-muted-foreground">
                       {item.score}%
@@ -787,22 +830,19 @@ export default function RecognizePage() {
             </div>
           </div>
 
-          <div className="bg-card border border-border rounded-xl p-4">
+          <div className="panel-accent bg-card border border-border rounded-xl p-4">
             <div className="flex items-center justify-between mb-3">
               <p className="text-xs font-mono text-muted-foreground">SENTENCE OUTPUT</p>
               <button
-                onClick={() => {
-                  setSentence('');
-                  setRecognizedWords([]);
-                }}
+                onClick={() => setRecognizedWords([])}
                 className="text-muted-foreground hover:text-foreground transition-colors"
               >
                 <Trash2 className="w-3.5 h-3.5" />
               </button>
             </div>
             <div className="min-h-[72px] rounded-lg bg-muted/40 border border-border px-3 py-2">
-              {sentence.trim().length > 0 ? (
-                <p className="text-sm text-foreground leading-relaxed">{sentence}</p>
+              {displaySentence.trim().length > 0 ? (
+                <p className="text-sm text-foreground leading-relaxed">{displaySentence}</p>
               ) : (
                 <p className="text-xs text-muted-foreground py-2">
                   Recognized gestures and face-touch interactions are added here automatically.
@@ -823,7 +863,7 @@ export default function RecognizePage() {
                     'text-sm font-bold uppercase',
                     i === 0 ? 'text-primary' : 'text-foreground',
                   )}>
-                    {item.word}
+                    {translateGesture(item.word, language)}
                   </span>
                   <span className="text-xs font-mono text-muted-foreground">
                     {item.confidence}%
@@ -834,6 +874,10 @@ export default function RecognizePage() {
           </div>
         </div>
       </div>
+
+      {guideOpen && (
+        <GestureGuide language={language} onClose={() => setGuideOpen(false)} />
+      )}
     </div>
   );
 }

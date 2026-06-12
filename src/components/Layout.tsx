@@ -1,17 +1,8 @@
-/**
- * Layout.tsx — Main layout with sidebar navigation
- *
- * Production demo version:
- * - Minimal navigation (Home, Recognize, About)
- * - Status bar showing model and camera state
- * - Accessibility controls
- */
-
 import { Link, useLocation } from 'wouter';
 import { useState } from 'react';
 import {
   Home, Camera, Info, Settings, Database, Brain, BarChart3,
-  ChevronLeft, ChevronRight, Sun, Moon, Contrast,
+  ChevronLeft, Sun, Moon, Contrast,
   Type, Volume2, VolumeX
 } from 'lucide-react';
 import { useApp } from '../contexts/AppContext';
@@ -45,18 +36,26 @@ export default function Layout({ children }: LayoutProps) {
     )}>
       {/* Sidebar */}
       <aside className={cn(
-        "border-r border-border flex flex-col transition-all duration-300",
+        "border-r border-border flex flex-col transition-all duration-300 sidebar-depth relative overflow-hidden",
         expanded ? "w-56" : "w-20"
       )}>
+
+        {/* Ambient particles — float upward, pointer-events none */}
+        <div className="particle" style={{ bottom: '8%',  left: '15%', width: '4px', height: '4px', '--float-delay': '0s',   '--float-duration': '6s'   } as React.CSSProperties} />
+        <div className="particle" style={{ bottom: '20%', left: '58%', width: '5px', height: '5px', '--float-delay': '1.5s', '--float-duration': '5s'   } as React.CSSProperties} />
+        <div className="particle" style={{ bottom: '12%', left: '38%', width: '4px', height: '4px', '--float-delay': '3s',   '--float-duration': '7s'   } as React.CSSProperties} />
+        <div className="particle" style={{ bottom: '28%', left: '72%', width: '6px', height: '6px', '--float-delay': '0.8s', '--float-duration': '5.5s' } as React.CSSProperties} />
+        <div className="particle" style={{ bottom: '16%', left: '45%', width: '8px', height: '8px', '--float-delay': '4s',   '--float-duration': '4.5s' } as React.CSSProperties} />
+
         {/* Logo */}
-        <div className="h-16 flex items-center justify-between px-4 border-b border-border">
+        <div className="h-16 flex items-center justify-between px-4 border-b border-border relative z-10">
           {expanded && (
             <div className="flex items-center gap-2">
-              <div className="w-8 h-8 rounded-lg bg-primary/20 flex items-center justify-center">
+              <div className="w-8 h-8 rounded-lg bg-primary/20 flex items-center justify-center glow-pulse">
                 <span className="text-xs font-bold text-primary">ASL</span>
               </div>
               <div className="flex flex-col">
-                <span className="text-xs font-bold text-foreground" style={{ fontFamily: 'Space Grotesk' }}>
+                <span className="text-xs font-bold text-gradient-animate" style={{ fontFamily: 'Space Grotesk' }}>
                   SignAI
                 </span>
                 <span className="text-[10px] text-muted-foreground">v1.0</span>
@@ -67,34 +66,40 @@ export default function Layout({ children }: LayoutProps) {
             onClick={() => setExpanded(!expanded)}
             className="p-1.5 hover:bg-muted rounded-lg transition-colors"
           >
-            {expanded ? <ChevronLeft className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
+            <ChevronLeft className={cn(
+              'w-4 h-4 transition-transform duration-300',
+              !expanded && 'rotate-180',
+            )} />
           </button>
         </div>
 
         {/* Navigation */}
-        <nav className="flex-1 p-3 space-y-2">
-          {NAV_ITEMS.map(({ path, icon: Icon, label, description }) => (
-            <Link key={path} href={path}>
-              <button className={cn(
-                "w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all text-sm font-medium",
-                location === path
-                  ? "bg-primary/15 text-primary border border-primary/30 glow-cyan"
-                  : "text-muted-foreground hover:text-foreground hover:bg-muted"
-              )}>
-                <Icon className="w-4 h-4 flex-shrink-0" />
-                {expanded && (
-                  <div className="flex-1 text-left">
-                    <p className="text-xs font-semibold">{label}</p>
-                    <p className="text-[10px] text-muted-foreground">{description}</p>
-                  </div>
-                )}
-              </button>
-            </Link>
-          ))}
+        <nav className="flex-1 p-3 space-y-2 relative z-10">
+          {NAV_ITEMS.map(({ path, icon: Icon, label, description }) => {
+            const isActive = location === path;
+            return (
+              <Link key={path} href={path}>
+                <button className={cn(
+                  "nav-item w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all text-sm font-medium",
+                  isActive
+                    ? "nav-active bg-primary/25 text-primary border border-primary/50 shadow-[0_0_24px_rgba(0,217,255,0.28),inset_0_0_14px_rgba(0,217,255,0.08)]"
+                    : "text-muted-foreground hover:text-foreground hover:bg-muted/80 hover:border-primary/20 border border-transparent"
+                )}>
+                  <Icon className="w-4 h-4 flex-shrink-0" />
+                  {expanded && (
+                    <div className="flex-1 text-left">
+                      <p className="text-xs font-semibold">{label}</p>
+                      <p className="text-[10px] text-muted-foreground">{description}</p>
+                    </div>
+                  )}
+                </button>
+              </Link>
+            );
+          })}
         </nav>
 
         {/* Accessibility Controls */}
-        <div className="border-t border-border p-3 space-y-2">
+        <div className="border-t border-border p-3 space-y-2 relative z-10">
           {/* Theme toggle */}
           <button
             onClick={toggleTheme}
@@ -151,13 +156,18 @@ export default function Layout({ children }: LayoutProps) {
         </div>
 
         {/* Status Bar */}
-        <div className="border-t border-border p-3 space-y-2 text-xs">
-          {/* ONNX / base model status */}
+        <div className="border-t border-border p-3 space-y-2 text-xs relative z-10">
           <div className="flex items-center gap-2">
-            <div className={cn(
-              "w-2 h-2 rounded-full flex-shrink-0",
-              modelReady ? "bg-success animate-pulse" : modelLoading ? "bg-warning animate-spin" : "bg-destructive"
-            )} />
+            {modelReady ? (
+              <div className="ring-ping flex-shrink-0">
+                <div className="w-2 h-2 rounded-full bg-success" />
+              </div>
+            ) : (
+              <div className={cn(
+                "w-2 h-2 rounded-full flex-shrink-0",
+                modelLoading ? "bg-warning animate-pulse" : "bg-destructive"
+              )} />
+            )}
             <span className="text-muted-foreground truncate">
               {modelReady ? 'ONNX: Ready' : modelLoading ? 'ONNX: Loading…' : 'ONNX: Error'}
             </span>
@@ -173,7 +183,7 @@ export default function Layout({ children }: LayoutProps) {
 
       {/* Main Content */}
       <main className="flex-1 overflow-auto">
-        <div className="p-8">
+        <div className="page-enter w-full max-w-screen-2xl mx-auto p-6 lg:p-8 xl:p-10 2xl:p-12">
           {children}
         </div>
       </main>

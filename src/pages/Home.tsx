@@ -1,61 +1,285 @@
-/**
- * Home.tsx — Landing page with quick start
- */
-
 import { Link } from 'wouter';
+import { useEffect, useRef, useState } from 'react';
 import { Camera, Zap, Lock, Smartphone, ArrowRight, Hand, ScanFace } from 'lucide-react';
+import gsap from 'gsap';
+
+const STATS = [
+  { prefix: '',    num: 30, suffix: '-frame gestures' },
+  { prefix: '30–', num: 60, suffix: ' FPS'            },
+  { prefix: '',    num: 5,  suffix: ' core signs'      },
+  { prefix: '',    num: 0,  suffix: ' servers'         },
+];
+
+const HOW_IT_WORKS = [
+  {
+    step: '01',
+    icon: Camera,
+    title: 'Start Camera',
+    desc: 'Grant webcam access and the app extracts one primary hand plus face landmarks locally.',
+    href: '/recognize',
+    cta: 'Open Demo',
+  },
+  {
+    step: '02',
+    icon: Hand,
+    title: 'Sign Core Gestures',
+    desc: 'Use hello, yes, no, please, and help for the most reliable hackathon demo path.',
+    href: '/recognize',
+    cta: 'Try Gestures',
+  },
+  {
+    step: '03',
+    icon: ScanFace,
+    title: 'Face Region Gestures',
+    desc: 'Move an index or middle fingertip near mouth, eye, nose, forehead, or ear to trigger combined gesture labels.',
+    href: '/recognize',
+    cta: 'Try Face Touch',
+  },
+];
+
+interface StepCardProps {
+  step: string;
+  icon: React.ElementType;
+  title: string;
+  desc: string;
+  href: string;
+  cta: string;
+  isLast: boolean;
+}
+
+function StepCard({ step, icon: Icon, title, desc, href, cta, isLast }: StepCardProps) {
+  const stepNumRef = useRef<HTMLSpanElement>(null);
+
+  const handleEnter = () => {
+    gsap.to(stepNumRef.current, { color: '#00d9ff', duration: 0.2, ease: 'power2.out' });
+  };
+  const handleLeave = () => {
+    gsap.to(stepNumRef.current, { color: 'rgba(0,217,255,0.2)', duration: 0.2, ease: 'power2.out' });
+  };
+
+  return (
+    <div className="flex flex-col md:flex-row items-center gap-4 flex-1">
+      <Link href={href} className="flex-1 w-full">
+        <div
+          className="card-hover step-gradient-border group bg-card rounded-xl p-6 h-full cursor-pointer hover:bg-primary/5 space-y-4"
+          onMouseEnter={handleEnter}
+          onMouseLeave={handleLeave}
+        >
+          <div className="flex items-center gap-3">
+            <span
+              ref={stepNumRef}
+              className="text-4xl font-bold"
+              style={{ fontFamily: 'JetBrains Mono, monospace', color: 'rgba(0,217,255,0.2)' }}
+            >
+              {step}
+            </span>
+            <div className="w-10 h-10 rounded-lg bg-primary/15 flex items-center justify-center border border-primary/20">
+              <Icon className="w-5 h-5 text-primary" />
+            </div>
+          </div>
+          <div>
+            <h4 className="text-base font-semibold text-foreground mb-1" style={{ fontFamily: 'Space Grotesk' }}>
+              {title}
+            </h4>
+            <p className="text-sm text-muted-foreground leading-relaxed">{desc}</p>
+          </div>
+          <div className="flex items-center gap-1 text-xs font-semibold text-primary group-hover:gap-2 transition-all">
+            {cta}
+            <ArrowRight className="w-3.5 h-3.5" />
+          </div>
+        </div>
+      </Link>
+
+      {!isLast && (
+        <ArrowRight className="w-5 h-5 text-muted-foreground flex-shrink-0 hidden md:block" />
+      )}
+    </div>
+  );
+}
 
 export default function Home() {
+  const heroRef = useRef<HTMLDivElement>(null);
+  const ctaRef = useRef<HTMLButtonElement>(null);
+  const statNumRefs = useRef<(HTMLSpanElement | null)[]>([]);
+  const [, forceRender] = useState(0);
+
+  useEffect(() => {
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+
+    const ctx = gsap.context(() => {
+      gsap.from('[data-hero-word]', {
+        y: 40,
+        opacity: 0,
+        stagger: 0.15,
+        duration: 0.8,
+        ease: 'power3.out',
+      });
+      gsap.from('[data-badge]', {
+        scale: 0.7,
+        opacity: 0,
+        stagger: 0.1,
+        delay: 0.5,
+        duration: 0.6,
+        ease: 'back.out(2)',
+      });
+      if (ctaRef.current) {
+        gsap.to(ctaRef.current, {
+          scale: 1.03,
+          duration: 0.45,
+          ease: 'power1.inOut',
+          yoyo: true,
+          repeat: -1,
+          repeatDelay: 2.1,
+          delay: 3,
+        });
+      }
+      gsap.from('[data-stat]', {
+        opacity: 0,
+        y: 12,
+        stagger: 0.09,
+        delay: 0.7,
+        duration: 0.5,
+        ease: 'power2.out',
+      });
+    }, heroRef);
+
+    const tweens = STATS.map((stat, i) => {
+      if (stat.num === 0) return null;
+      const el = statNumRefs.current[i];
+      if (!el) return null;
+      const counter = { val: 0 };
+      return gsap.to(counter, {
+        val: stat.num,
+        duration: 1.6,
+        delay: 0.8 + i * 0.1,
+        ease: 'power2.out',
+        onUpdate() { el.textContent = Math.round(counter.val).toString(); },
+      });
+    });
+
+    return () => {
+      ctx.revert();
+      tweens.forEach(t => t?.kill());
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const handleRipple = (e: React.MouseEvent<HTMLButtonElement>) => {
+    const btn = e.currentTarget;
+    const rect = btn.getBoundingClientRect();
+    const ripple = document.createElement('div');
+    Object.assign(ripple.style, {
+      position: 'absolute',
+      borderRadius: '50%',
+      background: 'rgba(255,255,255,0.4)',
+      width: '12px',
+      height: '12px',
+      top:  `${e.clientY - rect.top  - 6}px`,
+      left: `${e.clientX - rect.left - 6}px`,
+      pointerEvents: 'none',
+    });
+    btn.appendChild(ripple);
+    gsap.fromTo(
+      ripple,
+      { scale: 0, opacity: 1 },
+      { scale: 22, opacity: 0, duration: 0.7, ease: 'power2.out', onComplete: () => ripple.remove() },
+    );
+    forceRender(n => n + 1);
+  };
+
   return (
-    <div className="min-h-screen flex flex-col">
+    <div className="min-h-screen flex flex-col" ref={heroRef}>
 
       {/* ── Hero ───────────────────────────────────────────────────── */}
-      <div className="flex-1 flex items-center justify-center px-6 py-20">
-        <div className="max-w-2xl text-center space-y-6">
+      <div className="flex-1 flex items-center justify-center px-6 py-20 relative overflow-hidden">
+
+        {/* Aurora / nebula blobs */}
+        <div className="aurora-blob aurora-blob-1" />
+        <div className="aurora-blob aurora-blob-2" />
+        <div className="aurora-blob aurora-blob-3" />
+        <div className="aurora-blob aurora-blob-4" />
+
+        {/* Dot grid */}
+        <div className="dot-grid" />
+
+        {/* Floating particles */}
+        <div className="particle" style={{ bottom: '10%', left: '8%',  width: '5px', height: '5px', '--float-delay': '0s',   '--float-duration': '6s'   } as React.CSSProperties} />
+        <div className="particle" style={{ bottom: '20%', left: '20%', width: '4px', height: '4px', '--float-delay': '1.2s', '--float-duration': '5s'   } as React.CSSProperties} />
+        <div className="particle" style={{ bottom: '15%', left: '50%', width: '6px', height: '6px', '--float-delay': '2.4s', '--float-duration': '7s'   } as React.CSSProperties} />
+        <div className="particle" style={{ bottom: '25%', left: '70%', width: '4px', height: '4px', '--float-delay': '0.6s', '--float-duration': '5.5s' } as React.CSSProperties} />
+        <div className="particle" style={{ bottom: '8%',  left: '85%', width: '5px', height: '5px', '--float-delay': '3.5s', '--float-duration': '6.5s' } as React.CSSProperties} />
+        <div className="particle" style={{ bottom: '30%', left: '38%', width: '4px', height: '4px', '--float-delay': '1.8s', '--float-duration': '4.5s' } as React.CSSProperties} />
+        <div className="particle" style={{ bottom: '18%', left: '60%', width: '7px', height: '7px', '--float-delay': '4s',   '--float-duration': '5.5s' } as React.CSSProperties} />
+        <div className="particle" style={{ bottom: '12%', left: '30%', width: '3px', height: '3px', '--float-delay': '2.8s', '--float-duration': '6s'   } as React.CSSProperties} />
+
+        <div className="max-w-3xl xl:max-w-4xl 2xl:max-w-5xl text-center space-y-8 relative z-10">
           <div className="space-y-2">
-            <h1 className="text-5xl font-bold text-foreground" style={{ fontFamily: 'Space Grotesk' }}>
-              ASL Gesture
+            <h1
+              className="font-black text-foreground leading-tight"
+              style={{
+                fontFamily: 'Space Grotesk',
+                fontSize: 'clamp(3.5rem, 8vw, 6rem)',
+                textShadow: '0 0 40px rgba(0,217,255,0.7), 0 0 80px rgba(0,217,255,0.3)',
+              }}
+            >
+              <span data-hero-word className="inline-block mr-4">ASL</span>
+              <span data-hero-word className="inline-block">Gesture</span>
             </h1>
-            <h2 className="text-5xl font-bold text-primary glow-cyan-text" style={{ fontFamily: 'Space Grotesk' }}>
+            <h2
+              className="text-gradient-animate font-black leading-tight"
+              style={{
+                fontFamily: 'Space Grotesk',
+                fontSize: 'clamp(3.5rem, 8vw, 6rem)',
+              }}
+            >
               Recognition
             </h2>
           </div>
 
-          <p className="text-lg text-muted-foreground max-w-xl mx-auto">
+          <p data-hero-word className="text-lg md:text-xl text-muted-foreground max-w-2xl mx-auto leading-relaxed">
             Real-time American Sign Language gesture recognition using MediaPipe, ONNX Runtime, and face-touch detection.
-            Fully client-side — your data never leaves your device.
+            <span className="text-primary/80 font-medium"> Fully client-side — your data never leaves your device.</span>
           </p>
 
           {/* Badges */}
-          <div className="flex flex-wrap justify-center gap-3 pt-4">
-            <span className="px-3 py-1 rounded-full text-xs font-mono bg-primary/10 text-primary border border-primary/20">
+          <div className="flex flex-wrap justify-center gap-3">
+            <span data-badge className="shimmer px-4 py-1.5 rounded-full text-xs font-mono font-bold bg-primary/15 text-primary border border-primary/30 tracking-widest">
               AI-POWERED
             </span>
-            <span className="px-3 py-1 rounded-full text-xs font-mono bg-success/10 text-success border border-success/20">
+            <span data-badge className="shimmer px-4 py-1.5 rounded-full text-xs font-mono font-bold bg-success/10 text-success border border-success/25 tracking-widest">
               OPEN SOURCE
             </span>
-            <span className="px-3 py-1 rounded-full text-xs font-mono bg-warning/10 text-warning border border-warning/20">
+            <span data-badge className="shimmer px-4 py-1.5 rounded-full text-xs font-mono font-bold bg-warning/10 text-warning border border-warning/25 tracking-widest">
               BROWSER-NATIVE
             </span>
           </div>
 
           {/* CTA */}
           <Link href="/recognize">
-            <button className="mt-8 flex items-center gap-2 px-8 py-4 rounded-xl bg-primary text-primary-foreground text-lg font-semibold hover:opacity-90 transition-opacity glow-cyan mx-auto">
-              <Camera className="w-5 h-5" />
+            <button
+              ref={ctaRef}
+              className="btn-glow mt-4 flex items-center gap-3 px-12 py-5 rounded-xl text-xl font-bold mx-auto"
+              onMouseDown={handleRipple}
+            >
+              <Camera className="w-6 h-6" />
               Start Recognition
             </button>
           </Link>
 
-          {/* Performance stats row */}
-          <div className="pt-4 flex flex-wrap justify-center gap-x-6 gap-y-2">
-            {['30-frame gestures', '30–60 FPS', '5 core signs', '0 servers'].map((stat) => (
+          {/* Stats with counters */}
+          <div className="pt-2 flex flex-wrap justify-center gap-x-8 gap-y-2">
+            {STATS.map((stat, i) => (
               <span
-                key={stat}
+                key={i}
+                data-stat
                 className="text-xs font-mono text-muted-foreground"
                 style={{ fontFamily: 'JetBrains Mono, monospace' }}
               >
-                {stat}
+                {stat.prefix}
+                <span ref={el => { statNumRefs.current[i] = el; }} className="text-primary font-bold">
+                  {stat.num}
+                </span>
+                {stat.suffix}
               </span>
             ))}
           </div>
@@ -64,10 +288,13 @@ export default function Home() {
 
       {/* ── How it Works ───────────────────────────────────────────── */}
       <div className="px-6 py-16 border-t border-border">
-        <div className="max-w-5xl mx-auto">
-          <div className="text-center mb-12 space-y-2">
+        <div className="max-w-5xl xl:max-w-6xl 2xl:max-w-7xl mx-auto">
+          <div className="text-center mb-12 space-y-3">
             <p className="text-xs font-mono text-primary tracking-widest uppercase">Workflow</p>
-            <h3 className="text-2xl font-bold text-foreground" style={{ fontFamily: 'Space Grotesk' }}>
+            <h3
+              className="text-3xl font-bold text-foreground"
+              style={{ fontFamily: 'Space Grotesk', textShadow: '0 0 20px rgba(0,217,255,0.2)' }}
+            >
               How it Works
             </h3>
             <p className="text-sm text-muted-foreground max-w-md mx-auto">
@@ -76,67 +303,12 @@ export default function Home() {
           </div>
 
           <div className="flex flex-col md:flex-row items-stretch gap-4">
-            {[
-              {
-                step: '01',
-                icon: Camera,
-                title: 'Start Camera',
-                desc: 'Grant webcam access and the app extracts one primary hand plus face landmarks locally.',
-                href: '/recognize',
-                cta: 'Open Demo',
-              },
-              {
-                step: '02',
-                icon: Hand,
-                title: 'Sign Core Gestures',
-                desc: 'Use hello, yes, no, please, and help for the most reliable hackathon demo path.',
-                href: '/recognize',
-                cta: 'Try Gestures',
-              },
-              {
-                step: '03',
-                icon: ScanFace,
-                title: 'Face Region Gestures',
-                desc: 'Move an index or middle fingertip near mouth, eye, nose, forehead, or ear to trigger combined gesture labels.',
-                href: '/recognize',
-                cta: 'Try Face Touch',
-              },
-            ].map(({ step, icon: Icon, title, desc, href, cta }, i, arr) => (
-              <div key={step} className="flex flex-col md:flex-row items-center gap-4 flex-1">
-                <Link href={href} className="flex-1 w-full">
-                  <div className="group bg-card border border-border hover:border-primary/40 rounded-xl p-6 h-full transition-all cursor-pointer hover:bg-primary/5 space-y-4">
-                    <div className="flex items-center gap-3">
-                      <span
-                        className="text-3xl font-bold text-primary/20 group-hover:text-primary/40 transition-colors"
-                        style={{ fontFamily: 'JetBrains Mono, monospace' }}
-                      >
-                        {step}
-                      </span>
-                      <div className="w-9 h-9 rounded-lg bg-primary/10 flex items-center justify-center">
-                        <Icon className="w-4 h-4 text-primary" />
-                      </div>
-                    </div>
-                    <div>
-                      <h4
-                        className="text-base font-semibold text-foreground mb-1"
-                        style={{ fontFamily: 'Space Grotesk' }}
-                      >
-                        {title}
-                      </h4>
-                      <p className="text-sm text-muted-foreground leading-relaxed">{desc}</p>
-                    </div>
-                    <div className="flex items-center gap-1 text-xs font-semibold text-primary group-hover:gap-2 transition-all">
-                      {cta}
-                      <ArrowRight className="w-3.5 h-3.5" />
-                    </div>
-                  </div>
-                </Link>
-
-                {/* Arrow divider between steps */}
-                {i < arr.length - 1 && (
-                  <ArrowRight className="w-5 h-5 text-muted-foreground flex-shrink-0 hidden md:block" />
-                )}
-              </div>
+            {HOW_IT_WORKS.map((item, i) => (
+              <StepCard
+                key={item.step}
+                {...item}
+                isLast={i === HOW_IT_WORKS.length - 1}
+              />
             ))}
           </div>
         </div>
@@ -144,10 +316,10 @@ export default function Home() {
 
       {/* ── Why This Works ─────────────────────────────────────────── */}
       <div className="bg-card/50 border-t border-border px-6 py-16">
-        <div className="max-w-6xl mx-auto">
+        <div className="max-w-6xl xl:max-w-7xl 2xl:max-w-screen-xl mx-auto">
           <h3
-            className="text-2xl font-bold text-foreground mb-12 text-center"
-            style={{ fontFamily: 'Space Grotesk' }}
+            className="text-3xl font-bold text-foreground mb-12 text-center"
+            style={{ fontFamily: 'Space Grotesk', textShadow: '0 0 20px rgba(0,217,255,0.2)' }}
           >
             Why This Works
           </h3>
@@ -170,8 +342,8 @@ export default function Home() {
                 desc: 'Desktop, tablet, or mobile. Any modern browser with a webcam.',
               },
             ].map(({ icon: Icon, title, desc }) => (
-              <div key={title} className="bg-card border border-border rounded-xl p-6">
-                <div className="w-12 h-12 rounded-lg bg-primary/10 flex items-center justify-center mb-4">
+              <div key={title} className="card-hover step-gradient-border bg-card rounded-xl p-6">
+                <div className="w-12 h-12 rounded-xl bg-primary/15 flex items-center justify-center mb-4 border border-primary/20">
                   <Icon className="w-6 h-6 text-primary" />
                 </div>
                 <h4
@@ -189,7 +361,7 @@ export default function Home() {
 
       {/* ── Technology Stack ───────────────────────────────────────── */}
       <div className="px-6 py-12">
-        <div className="max-w-6xl mx-auto">
+        <div className="max-w-6xl xl:max-w-7xl 2xl:max-w-screen-xl mx-auto">
           <h3 className="text-sm font-mono text-muted-foreground uppercase tracking-wide mb-6">
             Technology Stack
           </h3>
@@ -201,7 +373,7 @@ export default function Home() {
               { name: 'React 19', desc: 'UI framework' },
               { name: 'Web Speech API', desc: 'Audio output' },
             ].map(({ name, desc }) => (
-              <div key={name} className="bg-muted/50 rounded-lg p-4">
+              <div key={name} className="bg-muted/50 rounded-lg p-4 border border-border hover:border-primary/30 transition-colors">
                 <p className="font-mono text-xs font-semibold text-primary mb-1">{name}</p>
                 <p className="text-xs text-muted-foreground">{desc}</p>
               </div>
