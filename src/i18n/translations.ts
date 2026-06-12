@@ -60,7 +60,7 @@ const GESTURE_TRANSLATIONS: Record<string, TranslationMap> = {
     th: 'ใช่',         vi: 'Có',
   },
   'no': {
-    en: 'No',          el: 'Όχι',            es: 'No',             fr: 'Non',             de: 'Nein',
+    en: 'No',          el: 'Οχι',            es: 'No',             fr: 'Non',             de: 'Nein',
     ar: 'لا',         he: 'לא',             ru: 'Нет',            zh: '否',               pt: 'Não',
     tr: 'Hayır',       it: 'No',             ja: 'いいえ',          ko: '아니요',            hi: 'नहीं',
     nl: 'Nee',         pl: 'Nie',            sv: 'Nej',            no: 'Nei',             da: 'Nej',
@@ -148,3 +148,12 @@ export function translateGesture(label: string, lang: LanguageCode): string {
   if (!map) return label;
   return map[lang] ?? label;
 }
+
+export const LANGUAGE_BCP47: Record<string, string> = {
+  en: 'en-US', el: 'el-GR', es: 'es-ES', fr: 'fr-FR', de: 'de-DE',
+  ar: 'ar-SA', he: 'he-IL', ru: 'ru-RU', zh: 'zh-CN', pt: 'pt-PT',
+  tr: 'tr-TR', it: 'it-IT', ja: 'ja-JP', ko: 'ko-KR', hi: 'hi-IN',
+  nl: 'nl-NL', pl: 'pl-PL', sv: 'sv-SE', no: 'nb-NO', da: 'da-DK',
+  fi: 'fi-FI', ro: 'ro-RO', cs: 'cs-CZ', uk: 'uk-UA', id: 'id-ID',
+  th: 'th-TH', vi: 'vi-VN',
+};
