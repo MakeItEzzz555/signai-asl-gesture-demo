@@ -1,5 +1,5 @@
 import { Link, useLocation } from 'wouter';
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import {
   Home, Camera, Info, Settings, Database, Brain, BarChart3,
   ChevronLeft, Sun, Moon, Contrast,
@@ -29,11 +29,68 @@ export default function Layout({ children }: LayoutProps) {
   const { accessibility, setAccessibility, modelReady, modelLoading } = useApp();
   const { theme, toggleTheme } = useTheme();
 
+  const mainRef = useRef<HTMLElement>(null);
+  const scrollProgressRef = useRef<HTMLDivElement>(null);
+  const cursorGlowRef = useRef<HTMLDivElement>(null);
+  const mouseTarget = useRef({ x: -500, y: -500 });
+  const mouseCurrent = useRef({ x: -500, y: -500 });
+
+  // Cursor glow — lerp-tracked, RAF-driven, transform-only (GPU composited)
+  useEffect(() => {
+    if (window.matchMedia('(hover: none)').matches) return;
+
+    const onMove = (e: MouseEvent) => {
+      mouseTarget.current.x = e.clientX;
+      mouseTarget.current.y = e.clientY;
+    };
+    window.addEventListener('mousemove', onMove, { passive: true });
+
+    let rafId: number;
+    const lerp = (a: number, b: number, t: number) => a + (b - a) * t;
+    const tick = () => {
+      mouseCurrent.current.x = lerp(mouseCurrent.current.x, mouseTarget.current.x, 0.08);
+      mouseCurrent.current.y = lerp(mouseCurrent.current.y, mouseTarget.current.y, 0.08);
+      if (cursorGlowRef.current) {
+        const x = mouseCurrent.current.x - 250;
+        const y = mouseCurrent.current.y - 250;
+        cursorGlowRef.current.style.transform = `translate(${x}px, ${y}px)`;
+      }
+      rafId = requestAnimationFrame(tick);
+    };
+    rafId = requestAnimationFrame(tick);
+
+    return () => {
+      window.removeEventListener('mousemove', onMove);
+      cancelAnimationFrame(rafId);
+    };
+  }, []);
+
+  // Scroll progress bar — scaleX transform (GPU composited)
+  useEffect(() => {
+    const main = mainRef.current;
+    if (!main) return;
+    const onScroll = () => {
+      const { scrollTop, scrollHeight, clientHeight } = main;
+      const progress = scrollHeight <= clientHeight
+        ? 0
+        : scrollTop / (scrollHeight - clientHeight);
+      if (scrollProgressRef.current) {
+        scrollProgressRef.current.style.transform = `scaleX(${progress})`;
+      }
+    };
+    main.addEventListener('scroll', onScroll, { passive: true });
+    return () => main.removeEventListener('scroll', onScroll);
+  }, []);
+
   return (
     <div className={cn(
       "min-h-screen flex bg-background text-foreground",
       "transition-colors duration-300"
     )}>
+      {/* Fixed global overlays */}
+      <div ref={scrollProgressRef} className="scroll-progress" />
+      <div ref={cursorGlowRef} className="cursor-glow" />
+
       {/* Sidebar */}
       <aside className={cn(
         "border-r border-border flex flex-col transition-all duration-300 sidebar-depth relative overflow-hidden",
@@ -182,7 +239,7 @@ export default function Layout({ children }: LayoutProps) {
       </aside>
 
       {/* Main Content */}
-      <main className="flex-1 overflow-auto">
+      <main ref={mainRef} className="flex-1 overflow-auto scroll-snap-y">
         <div className="page-enter w-full max-w-screen-2xl mx-auto p-6 lg:p-8 xl:p-10 2xl:p-12">
           {children}
         </div>

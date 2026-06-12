@@ -101,8 +101,10 @@ export default function Home() {
   const heroRef = useRef<HTMLDivElement>(null);
   const ctaRef = useRef<HTMLButtonElement>(null);
   const statNumRefs = useRef<(HTMLSpanElement | null)[]>([]);
+  const revealRefs = useRef<(HTMLDivElement | null)[]>([]);
   const [, forceRender] = useState(0);
 
+  // GSAP hero entrance
   useEffect(() => {
     if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
 
@@ -164,6 +166,26 @@ export default function Home() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // IntersectionObserver scroll-reveal for below-fold sections
+  useEffect(() => {
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+
+    const observer = new IntersectionObserver(
+      entries => {
+        entries.forEach(entry => {
+          if (entry.isIntersecting) {
+            entry.target.classList.add('visible');
+            observer.unobserve(entry.target);
+          }
+        });
+      },
+      { threshold: 0.08, rootMargin: '0px 0px -40px 0px' },
+    );
+
+    revealRefs.current.forEach(el => { if (el) observer.observe(el); });
+    return () => observer.disconnect();
+  }, []);
+
   const handleRipple = (e: React.MouseEvent<HTMLButtonElement>) => {
     const btn = e.currentTarget;
     const rect = btn.getBoundingClientRect();
@@ -191,9 +213,9 @@ export default function Home() {
     <div className="min-h-screen flex flex-col" ref={heroRef}>
 
       {/* ── Hero ───────────────────────────────────────────────────── */}
-      <div className="flex-1 flex items-center justify-center px-6 py-20 relative overflow-hidden">
+      <div className="hero-section flex-1 flex items-center justify-center px-6 py-20 relative overflow-hidden snap-start">
 
-        {/* Aurora / nebula blobs */}
+        {/* Aurora / nebula blobs — GPU layers via transform: translateZ(0) in CSS */}
         <div className="aurora-blob aurora-blob-1" />
         <div className="aurora-blob aurora-blob-2" />
         <div className="aurora-blob aurora-blob-3" />
@@ -287,7 +309,10 @@ export default function Home() {
       </div>
 
       {/* ── How it Works ───────────────────────────────────────────── */}
-      <div className="px-6 py-16 border-t border-border">
+      <div
+        className="scroll-reveal snap-start gradient-divider px-6 py-16"
+        ref={el => { revealRefs.current[0] = el; }}
+      >
         <div className="max-w-5xl xl:max-w-6xl 2xl:max-w-7xl mx-auto">
           <div className="text-center mb-12 space-y-3">
             <p className="text-xs font-mono text-primary tracking-widest uppercase">Workflow</p>
@@ -315,7 +340,10 @@ export default function Home() {
       </div>
 
       {/* ── Why This Works ─────────────────────────────────────────── */}
-      <div className="bg-card/50 border-t border-border px-6 py-16">
+      <div
+        className="scroll-reveal snap-start gradient-divider bg-card/50 px-6 py-16"
+        ref={el => { revealRefs.current[1] = el; }}
+      >
         <div className="max-w-6xl xl:max-w-7xl 2xl:max-w-screen-xl mx-auto">
           <h3
             className="text-3xl font-bold text-foreground mb-12 text-center"
@@ -324,7 +352,9 @@ export default function Home() {
             Why This Works
           </h3>
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 stagger-children"
+            ref={el => { revealRefs.current[2] = el; }}
+          >
             {[
               {
                 icon: Zap,
@@ -360,12 +390,17 @@ export default function Home() {
       </div>
 
       {/* ── Technology Stack ───────────────────────────────────────── */}
-      <div className="px-6 py-12">
+      <div
+        className="scroll-reveal snap-start gradient-divider px-6 py-12"
+        ref={el => { revealRefs.current[3] = el; }}
+      >
         <div className="max-w-6xl xl:max-w-7xl 2xl:max-w-screen-xl mx-auto">
           <h3 className="text-sm font-mono text-muted-foreground uppercase tracking-wide mb-6">
             Technology Stack
           </h3>
-          <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+          <div className="grid grid-cols-2 md:grid-cols-5 gap-4 stagger-children"
+            ref={el => { revealRefs.current[4] = el; }}
+          >
             {[
               { name: 'MediaPipe', desc: 'Hand + face landmarks' },
               { name: 'ONNX Runtime', desc: 'Primary inference engine' },

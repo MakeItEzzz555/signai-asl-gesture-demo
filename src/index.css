@@ -306,6 +306,11 @@
   animation: spin 1s linear infinite;
 }
 
+/* ─── Global scroll behaviour ───────────────────────────────── */
+html {
+  scroll-behavior: smooth;
+}
+
 /* ─── Scanline overlay ───────────────────────────────────────── */
 body::before {
   content: '';
@@ -328,7 +333,8 @@ body::before {
   border-radius: 50%;
   filter: blur(72px);
   pointer-events: none;
-  will-change: transform, opacity;
+  will-change: transform;
+  transform: translateZ(0);
 }
 .aurora-blob-1 {
   width: 680px; height: 680px;
@@ -363,13 +369,13 @@ body::before {
 
 /* ─── Gradient text ──────────────────────────────────────────── */
 .text-gradient-animate {
-  background: linear-gradient(90deg, #00d9ff 0%, #a855f7 28%, #1e40af 56%, #00d9ff 100%);
+  background: linear-gradient(90deg, #00e5ff 0%, #bf5fff 28%, #3b82f6 56%, #00e5ff 100%);
   background-size: 300% auto;
   -webkit-background-clip: text;
   background-clip: text;
   -webkit-text-fill-color: transparent;
   color: transparent;
-  filter: drop-shadow(0 0 32px rgba(0,217,255,0.7));
+  will-change: background-position;
 }
 
 /* ─── Card hover ─────────────────────────────────────────────── */
@@ -440,16 +446,16 @@ body::before {
     0 0 120px rgba(124,58,237,0.3),
     0 12px 50px rgba(0,0,0,0.6);
 }
-/* Moving shine streak */
+/* Moving shine streak — left is static, only transform animates */
 .btn-glow::after {
   content: '';
   position: absolute;
   top: -50%;
-  left: -70%;
+  left: 0;
   width: 25%;
   height: 200%;
   background: linear-gradient(105deg, transparent, rgba(255,255,255,0.4), transparent);
-  transform: skewX(-18deg);
+  transform: translateX(-300%) skewX(-18deg);
   pointer-events: none;
 }
 
@@ -679,10 +685,10 @@ body::before {
   }
 
   @keyframes btnShineStreak {
-    0%   { left: -70%; opacity: 0; }
+    0%   { transform: translateX(-300%) skewX(-18deg); opacity: 0; }
     8%   { opacity: 1; }
-    40%  { left: 130%; opacity: 0; }
-    100% { left: 130%; opacity: 0; }
+    40%  { transform: translateX(600%) skewX(-18deg); opacity: 0; }
+    100% { transform: translateX(600%) skewX(-18deg); opacity: 0; }
   }
   .btn-glow::after {
     animation: btnShineStreak 3s ease-in-out infinite;
@@ -714,5 +720,108 @@ body::before {
   .shimmer:hover::after {
     transform: translateX(100%);
     transition: transform 0.45s ease;
+  }
+}
+
+/* ─── Hero section isolation ─────────────────────────────────── */
+.hero-section {
+  contain: paint layout;
+  isolation: isolate;
+}
+
+/* ─── Scroll progress bar (uses scaleX, GPU composited) ─────── */
+.scroll-progress {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 2px;
+  background: linear-gradient(90deg, #00d9ff 0%, #7c3aed 50%, #00d9ff 100%);
+  z-index: 9999;
+  pointer-events: none;
+  transform: scaleX(0);
+  transform-origin: left center;
+  will-change: transform;
+}
+
+/* ─── Cursor glow (lerp-tracked, GPU composited) ────────────── */
+.cursor-glow {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 500px;
+  height: 500px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(0,217,255,0.07) 0%, transparent 60%);
+  pointer-events: none;
+  z-index: 0;
+  will-change: transform;
+  transform: translate(-250px, -250px);
+}
+@media (hover: none) {
+  .cursor-glow { display: none; }
+}
+
+/* ─── Scroll-reveal (IntersectionObserver) ───────────────────── */
+.scroll-reveal {
+  opacity: 0;
+  transform: translateY(32px);
+  transition: opacity 0.65s ease, transform 0.65s ease;
+  will-change: opacity, transform;
+}
+.scroll-reveal.visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+/* ─── Stagger children inside a scroll-reveal parent ────────── */
+/* Uses animation (not transition) so card-hover transitions are unaffected */
+@keyframes staggerItemIn {
+  from { opacity: 0; transform: translateY(24px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+.stagger-children > * {
+  opacity: 0;
+  transform: translateY(24px);
+}
+.stagger-children.visible > *:nth-child(1) { animation: staggerItemIn 0.55s 0ms   ease forwards; }
+.stagger-children.visible > *:nth-child(2) { animation: staggerItemIn 0.55s 85ms  ease forwards; }
+.stagger-children.visible > *:nth-child(3) { animation: staggerItemIn 0.55s 170ms ease forwards; }
+.stagger-children.visible > *:nth-child(4) { animation: staggerItemIn 0.55s 255ms ease forwards; }
+.stagger-children.visible > *:nth-child(5) { animation: staggerItemIn 0.55s 340ms ease forwards; }
+
+/* ─── Gradient section divider ───────────────────────────────── */
+.gradient-divider {
+  position: relative;
+}
+.gradient-divider::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, rgba(0,217,255,0.55) 35%, rgba(124,58,237,0.4) 65%, transparent);
+  pointer-events: none;
+}
+
+/* ─── Scroll snap utilities ──────────────────────────────────── */
+.scroll-snap-y   { scroll-snap-type: y proximity; }
+.snap-start      { scroll-snap-align: start; }
+
+/* ─── Reduced-motion overrides ───────────────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+  .scroll-reveal,
+  .scroll-reveal.visible {
+    opacity: 1;
+    transform: none;
+    transition: none;
+    will-change: auto;
+  }
+  .stagger-children > *,
+  .stagger-children.visible > * {
+    opacity: 1;
+    transform: none;
+    animation: none !important;
   }
 }
