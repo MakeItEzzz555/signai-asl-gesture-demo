@@ -38,7 +38,8 @@ import {
   type Landmark,
 } from '../utils/landmarks';
 import { cn } from '@/lib/utils';
-import { translateGesture, LANGUAGE_BCP47 } from '../i18n/translations';
+import { toast } from 'sonner';
+import { translateGesture, LANGUAGE_BCP47, LANGUAGES } from '../i18n/translations';
 import { speak, preWarmVoices } from '../utils/tts';
 import GestureGuide from '../components/GestureGuide';
 import LanguageSelector from '../components/LanguageSelector';
@@ -235,6 +236,17 @@ export default function RecognizePage() {
   // empty-deps contract on onLandmarks).
   const setRecognizedWordsRef = useRef(setRecognizedWords);
 
+  // Deduplicated "no voice" toast — one per language base code per session.
+  const warnedRef = useRef(new Set<string>());
+  const onMissingVoice = useCallback((lang: string) => {
+    const base = lang.split('-')[0];
+    if (warnedRef.current.has(base)) return;
+    warnedRef.current.add(base);
+    const name = LANGUAGES.find(l => l.code === base)?.nativeName ?? lang;
+    toast.warning(`No ${name} voice is installed on this device — speech is unavailable for this language.`);
+  }, []);
+  const onMissingVoiceRef = useRef(onMissingVoice);
+
   // Face-interaction priority gate.
   const faceActiveRef        = useRef(false);
   const emittedFaceRegionRef = useRef<FaceRegion | null>(null);
@@ -278,7 +290,7 @@ export default function RecognizePage() {
       if (interaction && emittedFaceRegionRef.current === null) {
         const combinedLabel = getCombinedGestureLabel(rightLiveGestureRef.current, interaction.faceRegion);
         if (autoSpeakRef.current && audioEnabledRef.current) {
-          speak(translateGesture(combinedLabel, languageRef.current), LANGUAGE_BCP47[languageRef.current] ?? 'en-US');
+          speak(translateGesture(combinedLabel, languageRef.current), LANGUAGE_BCP47[languageRef.current] ?? 'en-US', onMissingVoiceRef.current);
         }
         setRecognizedWordsRef.current(prev => [
           { word: combinedLabel, confidence: 100, timestamp: Date.now() },
@@ -322,7 +334,7 @@ export default function RecognizePage() {
                 ...prev.slice(0, 49),
               ]);
               if (autoSpeakRef.current && audioEnabledRef.current) {
-                speak(translateGesture(word, languageRef.current), LANGUAGE_BCP47[languageRef.current] ?? 'en-US');
+                speak(translateGesture(word, languageRef.current), LANGUAGE_BCP47[languageRef.current] ?? 'en-US', onMissingVoiceRef.current);
               }
             }
           }
@@ -356,8 +368,8 @@ export default function RecognizePage() {
       ? translateGesture(pred.currentGesture, accessibility.language)
       : null;
     const text = displaySentence.trim() || currentTranslated;
-    if (text) speak(text, LANGUAGE_BCP47[accessibility.language] ?? 'en-US');
-  }, [accessibility.audioEnabled, accessibility.language, displaySentence, pred.currentGesture]);
+    if (text) speak(text, LANGUAGE_BCP47[accessibility.language] ?? 'en-US', onMissingVoice);
+  }, [accessibility.audioEnabled, accessibility.language, displaySentence, pred.currentGesture, onMissingVoice]);
 
   useEffect(() => {
     return () => {

@@ -14,8 +14,9 @@ import { useApp } from '../contexts/AppContext';
 import { useTheme } from '../contexts/ThemeContext';
 import { cn } from '@/lib/utils';
 import LanguageSelector from '../components/LanguageSelector';
+import { toast } from 'sonner';
 import { speak } from '../utils/tts';
-import { LANGUAGE_BCP47, translateGesture } from '../i18n/translations';
+import { LANGUAGE_BCP47, LANGUAGES, translateGesture } from '../i18n/translations';
 
 function SettingRow({ icon: Icon, title, description, children }: {
   icon: React.ElementType;
@@ -204,7 +205,10 @@ export default function SettingsPage() {
               if (!accessibility.audioEnabled) return;
               const lang = accessibility.language;
               const bcp47 = LANGUAGE_BCP47[lang] ?? 'en-US';
-              speak(translateGesture('hello', lang), bcp47);
+              speak(translateGesture('hello', lang), bcp47, (missingLang) => {
+                const name = LANGUAGES.find(l => l.code === missingLang.split('-')[0])?.nativeName ?? missingLang;
+                toast.warning(`No ${name} voice is installed on this device — speech is unavailable for this language.`);
+              });
             }}
             disabled={!accessibility.audioEnabled}
             className="flex items-center gap-2 px-4 py-2 rounded-lg bg-muted text-foreground border border-border text-sm font-medium hover:bg-accent transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
