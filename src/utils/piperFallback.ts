@@ -20,15 +20,24 @@
  * CANCELLATION SEMANTICS
  * stopPiper() stops audio playback and invalidates pending *synthesis*
  * (predict/decode), but does NOT abort any in-progress model download.
- * The session-init Promise in sessionInits always runs to completion and
- * caches its result — piperGeneration only guards the post-session
- * synthesis stage, not the download stage.
+ * The session-init Promise always runs to completion and caches its
+ * result in OPFS — piperGeneration only guards the post-session synthesis
+ * stage, not the download stage.
  *
  * MEMORY BOUNDING
- * Only one TtsSession is kept in memory at a time.  preWarmPiper(newLang)
- * evicts the previously active session from the in-memory Map.  The ONNX
- * model data remains cached in OPFS (so re-selecting the same language
- * later loads from disk, not the network).
+ * Only one TtsSession is kept in memory at a time (the library enforces
+ * this via an internal singleton).  Switching languages resets the
+ * singleton and loads the new language's model from OPFS (fast) or the
+ * network (first use only).  Models stay in OPFS across sessions.
+ *
+ * SINGLETON FIX
+ * TtsSession.create() reuses its internal _instance when called a second
+ * time, only updating the voiceId string — NOT the ONNX model or the
+ * model config (which contains the espeak.voice used for phonemization).
+ * Before creating a session for a new language we reset _instance to null
+ * so the constructor runs a full init(): correct model + correct espeak
+ * phoneme language (es→es, el→el, etc.).  Sessions are serialized (one
+ * create at a time) to avoid concurrent calls on the singleton.
  *
  * VOICE CATALOG — verified against VoiceId type in package@1.0.4
  * Preferred quality: medium → low → x_low (medium not available for el/it).
@@ -47,14 +56,13 @@
  *   he  (neither Piper nor eSpeak supports Hebrew in this build)
  *
  * DIALECT NOTES
- *   pt → pt_BR-faber-medium (Brazilian).  LANGUAGE_BCP47 maps pt→'pt-PT'
- *        for native voice lookup, but the Piper pt_PT-tugão-medium voice
- *        showed phonemizer issues; pt_BR-faber produces cleaner output for
- *        the words used in this app (Olá/Sim/Não — same in both dialects).
- *        If strict EU-PT is required, revert to 'pt_PT-tugão-medium'.
+ *   pt → pt_PT-tugão-medium (European Portuguese).  LANGUAGE_BCP47 maps
+ *        pt→'pt-PT'; voice, locale, and translations are now consistent.
  *   tr → tr_TR-fettah-medium replaces tr_TR-dfki-medium.  The DFKI voice
  *        (from a German research lab) produced noticeably stiffer phoneme
  *        boundaries on Turkish consonant clusters; fettah is more natural.
+ *   ar → ar_JO-kareem-medium (Jordanian Arabic).  No ar_SA Piper voice
+ *        exists; Jordanian Arabic is mutually intelligible.
  *
  * LICENSE NOTE: @mintplex-labs/piper-tts-web is MIT.  However, the bundled
  * piper-phonemize WASM uses espeak-ng for phonemisation, which is GPL v3.
@@ -76,10 +84,10 @@ const PIPER_VOICE_MAP: Record<string, VoiceId> = {
   es: 'es_ES-davefx-medium',
   fr: 'fr_FR-siwis-medium',
   de: 'de_DE-thorsten-medium',
-  ar: 'ar_JO-kareem-medium',
+  ar: 'ar_JO-kareem-medium',        // no ar_SA in catalog; JO is mutually intelligible
   ru: 'ru_RU-irina-medium',
   zh: 'zh_CN-huayan-medium',
-  pt: 'pt_BR-faber-medium',         // was pt_PT-tugão-medium; see DIALECT NOTES
+  pt: 'pt_PT-tugão-medium',         // European Portuguese — matches LANGUAGE_BCP47 pt-PT
   tr: 'tr_TR-fettah-medium',        // was tr_TR-dfki-medium; see DIALECT NOTES
   it: 'it_IT-riccardo-x_low',       // medium not in catalog
   nl: 'nl_NL-mls-medium',
@@ -102,14 +110,15 @@ const PIPER_VOICE_MAP: Record<string, VoiceId> = {
 // Guards the POST-SESSION synthesis chain only — never the session download.
 let piperGeneration = 0;
 
-// ISO 639-1 code of the language whose TtsSession is currently resident.
-// Only one session is kept in the in-memory Map at a time.
+// The single in-memory TtsSession (library enforces singleton internally).
+let activeSession: TtsSession | null = null;
+
+// ISO 639-1 code of the language whose model is currently loaded.
 let activeLangCode: string | null = null;
 
-// Fully initialised sessions (model cached in OPFS, ready to synthesise).
-const sessions = new Map<string, TtsSession>();
-// In-flight TtsSession.create() Promises — always run to completion.
-const sessionInits = new Map<string, Promise<TtsSession>>();
+// In-flight TtsSession.create() — at most one at a time to avoid concurrent
+// calls on the library's singleton.  Always runs to completion (OPFS cache).
+let pendingInit: { lang: string; promise: Promise<TtsSession> } | null = null;
 
 let activeSource: AudioBufferSourceNode | null = null;
 let audioCtx: AudioContext | null = null;
@@ -143,12 +152,13 @@ export function piperHasVoice(langCode: string): boolean {
 }
 
 /**
- * True when the TtsSession for `langCode` is fully initialised and its model
- * is cached — i.e. speakWithPiper() will proceed without waiting on a download.
- * Returns false while the initial model download is still in progress.
+ * True when the TtsSession for `langCode` is the currently-loaded model —
+ * i.e. speakWithPiper() will proceed without waiting on a download or reload.
+ * Returns false while the initial model download is still in progress, or
+ * when a different language's model is currently active in the singleton.
  */
 export function piperVoiceReady(langCode: string): boolean {
-  return sessions.has(langCode);
+  return activeLangCode === langCode && activeSession !== null;
 }
 
 // ─── Public — playback control ────────────────────────────────────────────────
@@ -157,8 +167,8 @@ export function piperVoiceReady(langCode: string): boolean {
  * Stop any Piper audio currently playing and invalidate any pending synthesis
  * (predict/decode/play) so stale results are silently discarded.
  *
- * This does NOT interrupt an in-progress model download — session-init
- * Promises in `sessionInits` always run to completion.
+ * This does NOT interrupt an in-progress model download — the pendingInit
+ * Promise always runs to completion so the result is cached in OPFS.
  */
 export function stopPiper(): void {
   piperGeneration++;
@@ -175,21 +185,11 @@ export function stopPiper(): void {
  * any text.  Call this whenever the target language changes so the model is
  * ready before the user signs their first word.
  *
- * Idempotent: re-calling for the same language is a no-op.
- * Evicts the previous language's session from memory (OPFS data is kept).
+ * Idempotent: re-calling for the same language is a no-op once loaded.
  * Does NOT touch piperGeneration, so it never interferes with pending audio.
  */
 export async function preWarmPiper(langCode: string): Promise<void> {
   if (!piperHasVoice(langCode)) return;
-
-  // Evict the previous active session to bound in-memory footprint.
-  if (activeLangCode && activeLangCode !== langCode) {
-    sessions.delete(activeLangCode);
-    console.log(`[Piper] evicted "${activeLangCode}" session (switching to "${langCode}")`);
-  }
-  activeLangCode = langCode;
-
-  // getSession is idempotent: returns immediately if already cached/loading.
   try {
     await getSession(langCode);
   } catch (err) {
@@ -199,19 +199,44 @@ export async function preWarmPiper(langCode: string): Promise<void> {
 
 // ─── Private — session management ────────────────────────────────────────────
 
+/**
+ * Return the TtsSession for `langCode`, creating it if necessary.
+ *
+ * KEY INVARIANT: only one TtsSession.create() runs at a time (serialized via
+ * pendingInit) because the library uses an internal singleton (_instance).
+ * Before starting a new create we reset _instance = null so the constructor
+ * runs a full init() — loading the correct ONNX model AND the correct espeak
+ * phoneme language for that voice — instead of reusing the previous language's
+ * model config.
+ */
 async function getSession(langCode: string): Promise<TtsSession> {
   const voiceId = PIPER_VOICE_MAP[langCode];
   if (!voiceId) throw new Error(`[Piper] No voice for "${langCode}"`);
 
-  // Already fully initialised?
-  const cached = sessions.get(langCode);
-  if (cached) return cached;
+  // Already the active model?
+  if (activeLangCode === langCode && activeSession) return activeSession;
 
-  // Already downloading?
-  const inFlight = sessionInits.get(langCode);
-  if (inFlight) return inFlight;
+  // Already loading for this exact language?
+  if (pendingInit?.lang === langCode) return pendingInit.promise;
 
-  // Start a new download.
+  // Serialize: wait for any in-flight init to complete before resetting the
+  // library singleton. The completing init caches its model in OPFS even if
+  // it's for a different language — nothing is wasted.
+  if (pendingInit) {
+    try { await pendingInit.promise; } catch { /* ignore; errors handled below */ }
+    // Re-check after the await — a concurrent caller might have loaded our lang.
+    if (activeLangCode === langCode && activeSession) return activeSession;
+    if (pendingInit?.lang === langCode) return pendingInit.promise;
+  }
+
+  // Reset the library's internal singleton so TtsSession.create() runs a
+  // fresh init(): loads the correct ONNX model + espeak phoneme language
+  // for `voiceId` instead of reusing the previously-active language's model.
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  (TtsSession as any)._instance = null;
+  activeSession = null;
+  activeLangCode = langCode;
+
   const name  = nativeName(langCode);
   const label = sizeHint(voiceId);
   let   downloading = false;
@@ -228,19 +253,28 @@ async function getSession(langCode: string): Promise<TtsSession> {
     },
   })
     .then(session => {
-      sessions.set(langCode, session);
-      sessionInits.delete(langCode);
+      // Only install if we're still the pending init (language hasn't changed).
+      if (pendingInit?.lang === langCode) {
+        activeSession = session;
+        pendingInit = null;
+      }
       if (downloading) toast.dismiss(`piper-dl-${langCode}`);
-      console.log(`[Piper] ${langCode} → ${voiceId} session ready`);
+      console.log(
+        `[Piper] ${langCode} → ${voiceId} session ready` +
+        ` (espeak phonemizer: ${voiceId.split('-')[0]})`,
+      );
       return session;
     })
     .catch(err => {
-      sessionInits.delete(langCode);
+      if (pendingInit?.lang === langCode) {
+        pendingInit = null;
+        activeSession = null;
+      }
       if (downloading) toast.dismiss(`piper-dl-${langCode}`);
       throw err;
     });
 
-  sessionInits.set(langCode, promise);
+  pendingInit = { lang: langCode, promise };
   return promise;
 }
 
@@ -264,16 +298,11 @@ export async function speakWithPiper(
 ): Promise<void> {
   // Tag this synthesis call.  If generation changes before we start audio,
   // the post-session work is silently abandoned (but the session itself is
-  // not affected — it stays in `sessions` ready for the next call).
+  // not affected — it stays active for the next call).
   const gen = ++piperGeneration;
 
-  // Track the active language for eviction.
-  if (activeLangCode !== langCode) {
-    if (activeLangCode) sessions.delete(activeLangCode);
-    activeLangCode = langCode;
-  }
-
-  // getSession runs to completion regardless of piperGeneration changes.
+  // getSession serializes language switches and resets the library singleton
+  // so the correct model + phonemizer is loaded.  Always runs to completion.
   const session = await getSession(langCode);
 
   // From here on: bail if superseded.
@@ -309,7 +338,7 @@ export async function speakWithPiper(
     activeSource = src;
     src.start();
     console.log(
-      `[Piper] ${langCode} → ${PIPER_VOICE_MAP[langCode]}, ` +
+      `[Piper] speaking ${langCode} → ${PIPER_VOICE_MAP[langCode]}, ` +
       `${audioBuffer.duration.toFixed(2)}s`,
     );
   });
