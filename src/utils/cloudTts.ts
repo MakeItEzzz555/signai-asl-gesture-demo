@@ -9,10 +9,16 @@
  * Keyed by ISO 639-1 code.  For each language we select the highest-quality
  * available voice tier: Neural2 > WaveNet > Standard.
  *
- *   el-GR uses Chirp3-HD — the only quality option Google offers for Greek.
+ *   el-GR uses el-GR-Wavenet-A — WaveNet is confirmed for Greek; Chirp3-HD
+ *       speaker names are not reliably available for el-GR.
  *   ar uses ar-XA (Google's internal code for Modern Standard Arabic;
  *       ar-SA is not a supported Google TTS locale).
  *   Norwegian uses nb-NO (Bokmål), matching LANGUAGE_BCP47.
+ *
+ * SAFETY NET
+ * The /api/tts proxy retries with voiceName omitted (locale-default) if
+ * Google returns 400 for a named voice.  This means a stale name here
+ * degrades gracefully to Google's default for that locale — never to local.
  *
  * Voice names can be verified and updated in the Google Cloud console:
  *   https://cloud.google.com/text-to-speech/docs/list-voices-and-types
@@ -37,7 +43,7 @@ interface CloudVoice {
 
 const CLOUD_VOICE_MAP: Record<string, CloudVoice> = {
   en: { languageCode: 'en-US', voiceName: 'en-US-Neural2-F' },
-  el: { languageCode: 'el-GR', voiceName: 'el-GR-Chirp3-HD-Aoede' }, // Chirp3-HD; only quality option for Greek
+  el: { languageCode: 'el-GR', voiceName: 'el-GR-Wavenet-A' },       // WaveNet confirmed; Chirp3-HD speaker names unreliable for el
   es: { languageCode: 'es-ES', voiceName: 'es-ES-Neural2-A' },
   fr: { languageCode: 'fr-FR', voiceName: 'fr-FR-Neural2-A' },
   de: { languageCode: 'de-DE', voiceName: 'de-DE-Neural2-A' },
@@ -54,13 +60,13 @@ const CLOUD_VOICE_MAP: Record<string, CloudVoice> = {
   pl: { languageCode: 'pl-PL', voiceName: 'pl-PL-Wavenet-A' },
   sv: { languageCode: 'sv-SE', voiceName: 'sv-SE-Wavenet-A' },
   no: { languageCode: 'nb-NO', voiceName: 'nb-NO-Neural2-F' },
-  da: { languageCode: 'da-DK', voiceName: 'da-DK-Neural2-F' },
+  da: { languageCode: 'da-DK', voiceName: 'da-DK-Neural2-D' },         // D is the confirmed high-quality Danish Neural2 variant
   fi: { languageCode: 'fi-FI', voiceName: 'fi-FI-Standard-A' },
   ro: { languageCode: 'ro-RO', voiceName: 'ro-RO-Standard-A' },
   cs: { languageCode: 'cs-CZ', voiceName: 'cs-CZ-Wavenet-A' },
   uk: { languageCode: 'uk-UA', voiceName: 'uk-UA-Standard-A' },
   id: { languageCode: 'id-ID', voiceName: 'id-ID-Wavenet-A' },
-  th: { languageCode: 'th-TH', voiceName: 'th-TH-Neural2-C' },
+  th: { languageCode: 'th-TH', voiceName: 'th-TH-Standard-A' },        // Standard confirmed; Thai Neural2 availability uncertain
   vi: { languageCode: 'vi-VN', voiceName: 'vi-VN-Wavenet-A' },
 };
 

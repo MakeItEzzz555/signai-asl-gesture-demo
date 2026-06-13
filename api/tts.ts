@@ -10,19 +10,41 @@
  *           { text: string, languageCode: string, voiceName: string }
  *
  * Response: 200 audio/mpeg  — raw MP3 bytes
- *           400             — missing or invalid fields
+ *           400             — missing or invalid fields (client bug)
  *           503             — GOOGLE_TTS_API_KEY not set in environment
- *           502             — Google TTS API returned an error
+ *           502             — Google TTS API returned an error after retry
+ *
+ * 400 retry: if Google returns 400 for a request that includes a voiceName
+ * (the voice doesn't exist for that locale), the proxy retries ONCE with the
+ * voiceName omitted so Google picks the locale's default voice.  This means a
+ * stale voice name in cloudTts.ts never permanently drops a language to local
+ * fallback.  The retry is logged so stale names are visible in server logs.
  *
  * Deployment:
  *   Vercel  — set GOOGLE_TTS_API_KEY in Project → Settings → Environment Variables
  *   Netlify — set in Site settings → Environment variables
- *   Local   — add GOOGLE_TTS_API_KEY=<key> to .env.local and run `vercel dev`
- *             OR the Vite dev-server middleware in vite.config.ts picks it up
- *             automatically when you run `npm run dev`
+ *   Local   — add GOOGLE_TTS_API_KEY=<key> to .env.local; npm run dev picks it up
+ *             automatically via the Vite dev-server middleware in vite.config.ts
  */
 
 const GOOGLE_TTS_URL = 'https://texttospeech.googleapis.com/v1/text:synthesize';
+
+async function callGoogle(
+  apiKey: string,
+  text: string,
+  languageCode: string,
+  voiceName?: string,
+): Promise<Response> {
+  return fetch(`${GOOGLE_TTS_URL}?key=${apiKey}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      input: { text },
+      voice: voiceName ? { languageCode, name: voiceName } : { languageCode },
+      audioConfig: { audioEncoding: 'MP3' },
+    }),
+  });
+}
 
 // Vercel Node.js runtime handler (req: IncomingMessage, res: ServerResponse)
 export default async function handler(req: any, res: any): Promise<void> {
@@ -62,20 +84,31 @@ export default async function handler(req: any, res: any): Promise<void> {
 
   let googleRes: Response;
   try {
-    googleRes = await fetch(`${GOOGLE_TTS_URL}?key=${apiKey}`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        input: { text: text.trim() },
-        voice: { languageCode, name: voiceName },
-        audioConfig: { audioEncoding: 'MP3' },
-      }),
-    });
+    googleRes = await callGoogle(apiKey, text.trim(), languageCode, voiceName);
   } catch (err) {
     console.error('[TTS proxy] Google TTS fetch failed:', err);
     res.writeHead(502, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ error: 'Failed to reach TTS provider' }));
     return;
+  }
+
+  // 400 from Google with a voiceName means the named voice doesn't exist for
+  // this locale.  Retry once without the name so Google picks the locale's
+  // default voice — this keeps any stale voice name from permanently silencing
+  // a language.  The retry outcome (success or failure) is final.
+  if (googleRes.status === 400) {
+    const detail = await googleRes.text().catch(() => '');
+    console.warn(
+      `[TTS proxy] 400 for voice "${voiceName}" (${languageCode}), retrying with locale default. Detail: ${detail}`,
+    );
+    try {
+      googleRes = await callGoogle(apiKey, text.trim(), languageCode);
+    } catch (err) {
+      console.error('[TTS proxy] Retry fetch failed:', err);
+      res.writeHead(502, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Failed to reach TTS provider on retry' }));
+      return;
+    }
   }
 
   if (!googleRes.ok) {

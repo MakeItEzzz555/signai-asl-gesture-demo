@@ -53,19 +53,28 @@ export default defineConfig(({ mode }) => {
               return;
             }
 
+            const GOOGLE_URL = `https://texttospeech.googleapis.com/v1/text:synthesize?key=${apiKey}`;
+            const callGoogle = (vn?: string) => fetch(GOOGLE_URL, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                input: { text: text.trim() },
+                voice: vn ? { languageCode, name: vn } : { languageCode },
+                audioConfig: { audioEncoding: 'MP3' },
+              }),
+            });
+
             try {
-              const r = await fetch(
-                `https://texttospeech.googleapis.com/v1/text:synthesize?key=${apiKey}`,
-                {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({
-                    input: { text: text.trim() },
-                    voice: { languageCode, name: voiceName },
-                    audioConfig: { audioEncoding: 'MP3' },
-                  }),
-                },
-              );
+              let r = await callGoogle(voiceName);
+
+              // 400 means the named voice doesn't exist for this locale; retry
+              // with locale-default so a stale voice name never silences a language.
+              if (r.status === 400) {
+                const detail = await r.text().catch(() => '');
+                console.warn(`[dev-api-tts] 400 for voice "${voiceName}" (${languageCode}), retrying locale-default. Detail: ${detail}`);
+                r = await callGoogle();
+              }
+
               if (!r.ok) {
                 const detail = await r.text().catch(() => '');
                 console.error('[dev-api-tts] Google error:', r.status, detail);
