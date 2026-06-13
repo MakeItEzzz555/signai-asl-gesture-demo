@@ -1,6 +1,6 @@
 import { toast } from 'sonner';
 import { speakWithEspeak, stopEspeak, hasEspeakFor, isEspeakReady } from './espeakFallback';
-import { speakWithPiper, stopPiper, piperHasVoice } from './piperFallback';
+import { speakWithPiper, stopPiper, piperHasVoice, piperVoiceReady, preWarmPiper } from './piperFallback';
 
 // ─── Native voice cache ───────────────────────────────────────────────────────
 
@@ -74,9 +74,29 @@ export function speak(
 
       // Tier 2: Piper neural voice (natural-sounding, ONNX/VITS, client-side)
       if (piperHasVoice(base)) {
-        void speakWithPiper(text, base, { rate: 0.9 }).catch((err: unknown) => {
-          console.error('[TTS] Piper error for', base, ':', err instanceof Error ? err.message : err);
-        });
+        if (piperVoiceReady(base)) {
+          // Model cached — synthesise immediately.
+          void speakWithPiper(text, base, { rate: 0.9 }).catch((err: unknown) => {
+            console.error('[TTS] Piper error for', base, ':', err instanceof Error ? err.message : err);
+          });
+        } else {
+          // Model still downloading.  Ensure the download is running, then
+          // bridge THIS utterance through eSpeak for instant (if robotic) audio.
+          // Once the download completes, piperVoiceReady() will be true and
+          // subsequent words will use Piper automatically.
+          void preWarmPiper(base).catch(() => {});
+          if (hasEspeakFor(base)) {
+            maybeShowLoadingHint();
+            void speakWithEspeak(text, base).then(() => {
+              toast.dismiss('espeak-loading');
+              console.log(`[TTS] ${lang} → eSpeak-NG (Piper loading, bridge) (${base})`);
+            }).catch((err: unknown) => {
+              console.error('[TTS] eSpeak bridge error for', base, ':', err instanceof Error ? err.message : err);
+            });
+          }
+          // Note: uk has no eSpeak support — first cold word will be silent.
+          // Pre-warming on language selection is the primary mitigation.
+        }
         return;
       }
 

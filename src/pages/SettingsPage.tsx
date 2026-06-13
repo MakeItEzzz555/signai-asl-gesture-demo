@@ -16,6 +16,7 @@ import { cn } from '@/lib/utils';
 import LanguageSelector from '../components/LanguageSelector';
 import { toast } from 'sonner';
 import { speak } from '../utils/tts';
+import { preWarmPiper, piperHasVoice } from '../utils/piperFallback';
 import { LANGUAGE_BCP47, LANGUAGES, translateGesture } from '../i18n/translations';
 
 function SettingRow({ icon: Icon, title, description, children }: {
@@ -137,7 +138,12 @@ export default function SettingsPage() {
         >
           <LanguageSelector
             value={accessibility.language}
-            onChange={code => setAccessibility({ language: code })}
+            onChange={code => {
+              setAccessibility({ language: code });
+              if (accessibility.audioEnabled && piperHasVoice(code)) {
+                void preWarmPiper(code);
+              }
+            }}
           />
         </SettingRow>
       </div>

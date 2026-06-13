@@ -41,6 +41,7 @@ import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 import { translateGesture, LANGUAGE_BCP47, LANGUAGES } from '../i18n/translations';
 import { speak, preWarmVoices } from '../utils/tts';
+import { preWarmPiper, piperHasVoice } from '../utils/piperFallback';
 import GestureGuide from '../components/GestureGuide';
 import LanguageSelector from '../components/LanguageSelector';
 
@@ -260,6 +261,16 @@ export default function RecognizePage() {
 
   useEffect(() => { preWarmVoices(); }, []);
 
+  // Pre-warm the Piper model for the current language whenever it changes.
+  // The model download starts immediately in the background; eSpeak bridges
+  // until it is ready.  Runs on initial mount to catch the startup language.
+  useEffect(() => {
+    if (!accessibility.audioEnabled) return;
+    if (piperHasVoice(accessibility.language)) {
+      void preWarmPiper(accessibility.language);
+    }
+  }, [accessibility.language, accessibility.audioEnabled]);
+
   // Sentence is derived from recognizedWords (stored in English) translated
   // at render time — switching language instantly retranslates the whole output.
   const displaySentence = useMemo(
@@ -400,7 +411,12 @@ export default function RecognizePage() {
         <div className="flex flex-col items-end gap-2 flex-shrink-0">
           <LanguageSelector
             value={language}
-            onChange={code => setAccessibility({ language: code })}
+            onChange={code => {
+              setAccessibility({ language: code });
+              if (audioEnabledRef.current && piperHasVoice(code)) {
+                void preWarmPiper(code);
+              }
+            }}
           />
           {modelError && (
             <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-destructive/10 border border-destructive/20">
