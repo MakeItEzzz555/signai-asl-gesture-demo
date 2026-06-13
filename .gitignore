@@ -24,6 +24,11 @@ __pycache__/
 !/public/models/asl_dynamic.onnx
 !/public/models/asl_dynamic_labels.json
 
+# Environment / secrets — never commit real keys
+.env
+.env.local
+.env.*.local
+
 # OS/editor local files
 .DS_Store
 *.swp

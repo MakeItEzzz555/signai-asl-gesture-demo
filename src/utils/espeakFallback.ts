@@ -32,9 +32,10 @@ interface SimpleTTSInstance {
 // Non-obvious mappings confirmed by binary scan:
 //   zh → 'zh'  (this build predates the cmn rename)
 //   no → 'no'  (Norwegian Bokmål; eSpeak uses 'no', not 'nb', in 1.49.x)
+//   uk: null   (no Ukrainian in this build — uk uses the Piper voice instead)
 const VOICE_MAP: Record<string, string | null> = {
   en: 'en', el: 'el', es: 'es', fr: 'fr', de: 'de',
-  ar: 'ar', he: null, ru: 'ru', zh: 'zh', pt: 'pt',
+  ar: 'ar', ru: 'ru', zh: 'zh', pt: 'pt',
   tr: 'tr', it: 'it', ja: 'ja', ko: 'ko', hi: 'hi',
   nl: 'nl', pl: 'pl', sv: 'sv', no: 'no', da: 'da',
   fi: 'fi', ro: 'ro', cs: 'cs', uk: null, id: 'id',

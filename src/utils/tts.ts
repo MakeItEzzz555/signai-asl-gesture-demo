@@ -1,6 +1,15 @@
 import { toast } from 'sonner';
 import { speakWithEspeak, stopEspeak, hasEspeakFor, isEspeakReady } from './espeakFallback';
 import { speakWithPiper, stopPiper, piperHasVoice, piperVoiceReady, preWarmPiper } from './piperFallback';
+import { speakWithCloud, stopCloud, cloudAvailable } from './cloudTts';
+
+// ─── Cloud voices preference (set by AppContext on every useCloudTts change) ──
+
+let useCloudVoices = false;
+
+export function setCloudVoicesEnabled(enabled: boolean): void {
+  useCloudVoices = enabled;
+}
 
 // ─── Native voice cache ───────────────────────────────────────────────────────
 
@@ -51,7 +60,7 @@ function maybeShowLoadingHint(): void {
   });
 }
 
-// ─── speak() — tier order: native → Piper neural → eSpeak-NG → onMissing ────
+// ─── speak() — tier order: cloud → native → Piper neural → eSpeak → onMissing
 
 export function speak(
   text: string,
@@ -61,11 +70,32 @@ export function speak(
   if (!text || !('speechSynthesis' in window)) return;
 
   const run = () => {
-    // Stop all engines before starting a new utterance to prevent overlap.
+    // Stop every engine before starting a new utterance to prevent overlap.
+    // stopCloud() aborts in-flight fetch but does NOT affect Piper downloads.
+    stopCloud();
     window.speechSynthesis.cancel();
     stopEspeak();
     stopPiper();
 
+    const base = lang.split('-')[0];
+
+    // Tier 1: Cloud TTS — Google-quality neural voices for all 26 languages.
+    // Falls through to local tiers on any error; AbortError (deliberate cancel)
+    // is swallowed silently.
+    if (useCloudVoices && cloudAvailable()) {
+      void speakWithCloud(text, base)
+        .catch((err: unknown) => {
+          if (err instanceof Error && err.name === 'AbortError') return;
+          console.warn('[TTS] Cloud failed, falling back to local:', err instanceof Error ? err.message : String(err));
+          runLocal();
+        });
+      return;
+    }
+
+    runLocal();
+  };
+
+  const runLocal = () => {
     refreshVoices();
     const voice = resolveVoice(lang);
 
@@ -75,15 +105,11 @@ export function speak(
       // Tier 2: Piper neural voice (natural-sounding, ONNX/VITS, client-side)
       if (piperHasVoice(base)) {
         if (piperVoiceReady(base)) {
-          // Model cached — synthesise immediately.
           void speakWithPiper(text, base, { rate: 0.9 }).catch((err: unknown) => {
             console.error('[TTS] Piper error for', base, ':', err instanceof Error ? err.message : err);
           });
         } else {
-          // Model still downloading.  Ensure the download is running, then
-          // bridge THIS utterance through eSpeak for instant (if robotic) audio.
-          // Once the download completes, piperVoiceReady() will be true and
-          // subsequent words will use Piper automatically.
+          // Model still downloading.  Kick off the download, bridge with eSpeak.
           void preWarmPiper(base).catch(() => {});
           if (hasEspeakFor(base)) {
             maybeShowLoadingHint();
@@ -94,13 +120,11 @@ export function speak(
               console.error('[TTS] eSpeak bridge error for', base, ':', err instanceof Error ? err.message : err);
             });
           }
-          // Note: uk has no eSpeak support — first cold word will be silent.
-          // Pre-warming on language selection is the primary mitigation.
         }
         return;
       }
 
-      // Tier 3: eSpeak-NG offline fallback (robotic but universal)
+      // Tier 3: eSpeak-NG offline fallback
       if (hasEspeakFor(base)) {
         maybeShowLoadingHint();
         void speakWithEspeak(text, base).then(() => {
@@ -110,14 +134,14 @@ export function speak(
           console.error('[TTS] eSpeak error for', base, ':', err instanceof Error ? err.message : err);
         });
       } else {
-        // Tier 4: no voice at all — notify caller
-        console.warn(`[TTS] no native, Piper, or eSpeak voice for ${lang}`);
+        // Tier 4: no local voice — notify caller
+        console.warn(`[TTS] no local voice for ${lang}`);
         onMissing?.(lang);
       }
       return;
     }
 
-    // Tier 1: native browser voice (primary — best quality, instant)
+    // Tier 2 (native): browser has a native voice for this locale — use it.
     const u = new SpeechSynthesisUtterance(text);
     u.voice = voice;
     u.lang = voice.lang;

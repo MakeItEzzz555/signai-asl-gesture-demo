@@ -9,7 +9,7 @@
  * - About / system info
  */
 
-import { Sun, Moon, Contrast, Type, Volume2, VolumeX, Mic, Info, Globe } from 'lucide-react';
+import { Sun, Moon, Contrast, Type, Volume2, VolumeX, Mic, Info, Globe, Wifi } from 'lucide-react';
 import { useApp } from '../contexts/AppContext';
 import { useTheme } from '../contexts/ThemeContext';
 import { cn } from '@/lib/utils';
@@ -204,6 +204,17 @@ export default function SettingsPage() {
           />
         </SettingRow>
 
+        <SettingRow
+          icon={Wifi}
+          title="Online Voices"
+          description="Use cloud speech synthesis for natural-sounding voices in all languages (Greek, Japanese, Korean, Hindi, etc.). When enabled, recognized text is sent to the speech provider."
+        >
+          <Toggle
+            checked={accessibility.useCloudTts}
+            onChange={() => setAccessibility({ useCloudTts: !accessibility.useCloudTts })}
+          />
+        </SettingRow>
+
         {/* Speech test */}
         <div className="mt-3 pt-3 border-t border-border">
           <button
@@ -257,7 +268,9 @@ export default function SettingsPage() {
           </div>
           <div className="flex justify-between">
             <span>Data Privacy</span>
-            <span className="text-success">100% client-side · No server</span>
+            <span className={accessibility.useCloudTts ? 'text-warning' : 'text-success'}>
+              {accessibility.useCloudTts ? 'Online voices on · text sent to provider' : '100% client-side · No server'}
+            </span>
           </div>
         </div>
         <div className="mt-4 p-3 rounded-lg bg-muted/50 border border-border flex items-start gap-2">

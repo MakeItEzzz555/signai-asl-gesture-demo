@@ -100,8 +100,7 @@ const PIPER_VOICE_MAP: Record<string, VoiceId> = {
   cs: 'cs_CZ-jirka-medium',
   uk: 'uk_UA-ukrainian_tts-medium',
   vi: 'vi_VN-vais1000-medium',
-  // he: no Piper voice; no eSpeak voice either → onMissing(lang)
-  // ja, ko, hi, id, th: no Piper voice → eSpeak tier
+  // ja, ko, hi, id, th: no Piper voice → cloud TTS (Tier 1) or eSpeak (Tier 3)
 };
 
 // ─── Module state ─────────────────────────────────────────────────────────────

@@ -10,7 +10,8 @@
  */
 
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
-import { type LanguageCode } from '../i18n/translations';
+import { type LanguageCode, LANGUAGES } from '../i18n/translations';
+import { setCloudVoicesEnabled } from '../utils/tts';
 
 export type TextSize = 'normal' | 'large' | 'xl';
 
@@ -19,6 +20,7 @@ export interface Accessibility {
   textSize: TextSize;
   audioEnabled: boolean;
   autoSpeak: boolean;
+  useCloudTts: boolean;
   language: LanguageCode;
 }
 
@@ -100,6 +102,7 @@ const DEFAULT_ACCESSIBILITY: Accessibility = {
   textSize: 'normal',
   audioEnabled: true,
   autoSpeak: true,
+  useCloudTts: false,
   language: 'en',
 };
 
@@ -175,12 +178,21 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     if (stored) {
       try {
         const parsed = JSON.parse(stored) as Partial<Accessibility>;
+        // Guard: if a previously-valid language was removed from the app, reset to English.
+        if (parsed.language && !LANGUAGES.some(l => l.code === parsed.language)) {
+          parsed.language = 'en';
+        }
         setAccessibilityState(prev => ({ ...prev, ...parsed }));
       } catch {
         // ignore malformed data
       }
     }
   }, []);
+
+  // Sync useCloudTts preference into the TTS routing module.
+  useEffect(() => {
+    setCloudVoicesEnabled(accessibility.useCloudTts);
+  }, [accessibility.useCloudTts]);
 
   // Persist accessibility settings to localStorage on every change.
   useEffect(() => {
