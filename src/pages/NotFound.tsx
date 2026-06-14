@@ -54,7 +54,7 @@ export default function NotFound() {
 
         {/* Status hint */}
         <p className="text-[11px] font-mono text-muted-foreground/60">
-          SignAI v1.0 · All processing is client-side
+          Gesto v1.0 · All processing is client-side
         </p>
       </div>
     </div>

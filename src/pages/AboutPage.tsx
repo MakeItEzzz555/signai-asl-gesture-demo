@@ -32,7 +32,7 @@ export default function AboutPage() {
       <div className="space-y-1">
         <p className="text-xs font-mono text-primary tracking-widest uppercase">Technical Reference</p>
         <h1 className="text-3xl font-bold text-foreground" style={{ fontFamily: 'Space Grotesk' }}>
-          About SignAI
+          About Gesto
         </h1>
         <p className="text-muted-foreground mt-1 max-w-xl">
           A focused ASL gesture demo built entirely in the browser —
@@ -287,7 +287,7 @@ export default function AboutPage() {
 
       {/* ── Footer ───────────────────────────────────────────────────── */}
       <div className="text-center text-xs text-muted-foreground border-t border-border pt-6 space-y-1">
-        <p className="font-mono">SignAI v1.0 · Built with MediaPipe + ONNX Runtime</p>
+        <p className="font-mono">Gesto v1.0 · Built with MediaPipe + ONNX Runtime</p>
         <p className="text-muted-foreground/60">100% client-side · No servers · No data collection</p>
       </div>
     </div>
