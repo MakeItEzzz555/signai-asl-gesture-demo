@@ -36,22 +36,29 @@ export default function Layout({ children }: LayoutProps) {
   useEffect(() => {
     const main = mainRef.current;
     if (!main) return;
+    let rafId = 0;
     const onScroll = () => {
-      const { scrollTop, scrollHeight, clientHeight } = main;
-      const progress = scrollHeight <= clientHeight
-        ? 0
-        : scrollTop / (scrollHeight - clientHeight);
-      if (scrollProgressRef.current) {
-        scrollProgressRef.current.style.transform = `scaleX(${progress})`;
-      }
+      cancelAnimationFrame(rafId);
+      rafId = requestAnimationFrame(() => {
+        const { scrollTop, scrollHeight, clientHeight } = main;
+        const progress = scrollHeight <= clientHeight
+          ? 0
+          : scrollTop / (scrollHeight - clientHeight);
+        if (scrollProgressRef.current) {
+          scrollProgressRef.current.style.transform = `scaleX(${progress})`;
+        }
+      });
     };
     main.addEventListener('scroll', onScroll, { passive: true });
-    return () => main.removeEventListener('scroll', onScroll);
+    return () => {
+      main.removeEventListener('scroll', onScroll);
+      cancelAnimationFrame(rafId);
+    };
   }, []);
 
   return (
     <div className={cn(
-      "min-h-screen flex bg-background text-foreground",
+      "h-screen overflow-hidden flex bg-background text-foreground",
       "transition-colors duration-300"
     )}>
       {/* Scroll progress bar */}
@@ -203,10 +210,14 @@ export default function Layout({ children }: LayoutProps) {
       {/* Main Content */}
       <main
         ref={mainRef}
-        className="flex-1 overflow-auto"
-        style={{ scrollBehavior: 'smooth', WebkitOverflowScrolling: 'touch' } as React.CSSProperties}
+        className="flex-1 overflow-y-auto overflow-x-hidden"
+        style={{
+          WebkitOverflowScrolling: 'touch',
+          overscrollBehavior: 'contain',
+          transform: 'translateZ(0)',
+        } as React.CSSProperties}
       >
-        <div className="page-enter w-full max-w-screen-2xl mx-auto p-6 lg:p-8 xl:p-10 2xl:p-12">
+        <div className="page-enter w-full p-6 lg:p-8 xl:p-10 2xl:p-12">
           {children}
         </div>
       </main>

@@ -215,11 +215,9 @@ export default function Home() {
       {/* ── Hero ───────────────────────────────────────────────────── */}
       <div className="hero-section -mx-6 -mt-6 lg:-mx-8 lg:-mt-8 xl:-mx-10 xl:-mt-10 2xl:-mx-12 2xl:-mt-12 flex-1 flex items-center justify-center px-6 pt-8 pb-20 relative overflow-hidden">
 
-        {/* Aurora / nebula blobs — GPU layers via transform: translateZ(0) in CSS */}
+        {/* Aurora blobs — 2 only, GPU layers via transform: translateZ(0) in CSS */}
         <div className="aurora-blob aurora-blob-1" />
         <div className="aurora-blob aurora-blob-2" />
-        <div className="aurora-blob aurora-blob-3" />
-        <div className="aurora-blob aurora-blob-4" />
 
         {/* Dot grid */}
         <div className="dot-grid" />

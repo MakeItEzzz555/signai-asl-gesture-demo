@@ -38,7 +38,10 @@ import {
   type Landmark,
 } from '../utils/landmarks';
 import { cn } from '@/lib/utils';
-import { translateGesture } from '../i18n/translations';
+import { toast } from 'sonner';
+import { translateGesture, LANGUAGE_BCP47, LANGUAGES } from '../i18n/translations';
+import { speak, preWarmVoices } from '../utils/tts';
+import { preWarmPiper, piperHasVoice } from '../utils/piperFallback';
 import GestureGuide from '../components/GestureGuide';
 import LanguageSelector from '../components/LanguageSelector';
 
@@ -52,15 +55,6 @@ const BUFFER_FRAMES = SEQUENCE_FRAMES;
 const FACE_INTERACTION_HOLD = 16;
 const HAND_IMG = 'https://private-us-east-1.manuscdn.com/sessionFile/4iXw0AOERkK4bJszd4LVcS/sandbox/AM4gAxP42WhibloDBqGRo8-img-2_1772125094000_na1fn_aGFuZC1sYW5kbWFya3M.png?x-oss-process=image/resize,w_1920,h_1920/format,webp/quality,q_80&Expires=1798761600&Policy=eyJTdGF0ZW1lbnQiOlt7IlJlc291cmNlIjoiaHR0cHM6Ly9wcml2YXRlLXVzLWVhc3QtMS5tYW51c2Nkbi5jb20vc2Vzc2lvbkZpbGUvNGlYdzBBT0VSa0s0YkpzemQ0TFZjUy9zYW5kYm94L0FNNGdBeFA0MldoaWJsb0RCcUdSbzgtaW1nLTJfMTc3MjEyNTA5NDAwMF9uYTFmbl9hR0Z1WkMxc1lXNWtiV0Z5YTNNLnBuZz94LW9zcy1wcm9jZXNzPWltYWdlL3Jlc2l6ZSx3XzE5MjAsaF8xOTIwL2Zvcm1hdCx3ZWJwL3F1YWxpdHkscV84MCIsIkNvbmRpdGlvbiI6eyJEYXRlTGVzc1RoYW4iOnsiQVdTOkVwb2NoVGltZSI6MTc5ODc2MTYwMH19fV19&Key-Pair-Id=K2HSFNDJXOU9YS&Signature=d6riQjn4rbiFcMw~1ofAg14udAxVDb3JjMs53iEgnOvVt3203S0YyZwAlkvxWIe6OOkG3W5rVjyJpwcGudPZ6nCpDSGAMslgsjpktJSVVp8zFF14GpLiT9nTgVnGTKWvqEVhyA0q00PuplWqoEpCO~5eeVNNla0batvoWIhEytgjiKwoWHXIvjeBSUeS3S0vQvak6Bdz6pL5VYZTMOl0G9UPcK7FPS9EzbtNNNvR806wOPO1fhcYj5cuNxTrh13U0sD6dO385-jRfPiomI9Lhwi5pzMJ8MR0QKf5GlF-kUrfW4~ZpzZ9sauCSv2bHIpZHnioCOKyKoHmhyiwHnZY8g__';
 
-function speak(text: string) {
-  if (!('speechSynthesis' in window)) return;
-  window.speechSynthesis.cancel();
-  const utterance = new SpeechSynthesisUtterance(text);
-  utterance.rate = 1.0;
-  utterance.pitch = 1.0;
-  utterance.volume = 1.0;
-  window.speechSynthesis.speak(utterance);
-}
 
 const FACE_REGION_LABEL: Record<FaceRegion, string> = {
   mouth: 'Mouth',
@@ -243,6 +237,17 @@ export default function RecognizePage() {
   // empty-deps contract on onLandmarks).
   const setRecognizedWordsRef = useRef(setRecognizedWords);
 
+  // Deduplicated "no voice" toast — one per language base code per session.
+  const warnedRef = useRef(new Set<string>());
+  const onMissingVoice = useCallback((lang: string) => {
+    const base = lang.split('-')[0];
+    if (warnedRef.current.has(base)) return;
+    warnedRef.current.add(base);
+    const name = LANGUAGES.find(l => l.code === base)?.nativeName ?? lang;
+    toast.warning(`No ${name} voice is installed on this device — speech is unavailable for this language.`);
+  }, []);
+  const onMissingVoiceRef = useRef(onMissingVoice);
+
   // Face-interaction priority gate.
   const faceActiveRef        = useRef(false);
   const emittedFaceRegionRef = useRef<FaceRegion | null>(null);
@@ -253,6 +258,18 @@ export default function RecognizePage() {
     audioEnabledRef.current = accessibility.audioEnabled;
     languageRef.current = accessibility.language;
   }, [accessibility.autoSpeak, accessibility.audioEnabled, accessibility.language]);
+
+  useEffect(() => { preWarmVoices(); }, []);
+
+  // Pre-warm the Piper model for the current language whenever it changes.
+  // The model download starts immediately in the background; eSpeak bridges
+  // until it is ready.  Runs on initial mount to catch the startup language.
+  useEffect(() => {
+    if (!accessibility.audioEnabled) return;
+    if (piperHasVoice(accessibility.language)) {
+      void preWarmPiper(accessibility.language);
+    }
+  }, [accessibility.language, accessibility.audioEnabled]);
 
   // Sentence is derived from recognizedWords (stored in English) translated
   // at render time — switching language instantly retranslates the whole output.
@@ -284,7 +301,7 @@ export default function RecognizePage() {
       if (interaction && emittedFaceRegionRef.current === null) {
         const combinedLabel = getCombinedGestureLabel(rightLiveGestureRef.current, interaction.faceRegion);
         if (autoSpeakRef.current && audioEnabledRef.current) {
-          speak(translateGesture(combinedLabel, languageRef.current));
+          speak(translateGesture(combinedLabel, languageRef.current), LANGUAGE_BCP47[languageRef.current] ?? 'en-US', onMissingVoiceRef.current);
         }
         setRecognizedWordsRef.current(prev => [
           { word: combinedLabel, confidence: 100, timestamp: Date.now() },
@@ -328,7 +345,7 @@ export default function RecognizePage() {
                 ...prev.slice(0, 49),
               ]);
               if (autoSpeakRef.current && audioEnabledRef.current) {
-                speak(translateGesture(word, languageRef.current));
+                speak(translateGesture(word, languageRef.current), LANGUAGE_BCP47[languageRef.current] ?? 'en-US', onMissingVoiceRef.current);
               }
             }
           }
@@ -362,8 +379,8 @@ export default function RecognizePage() {
       ? translateGesture(pred.currentGesture, accessibility.language)
       : null;
     const text = displaySentence.trim() || currentTranslated;
-    if (text) speak(text);
-  }, [accessibility.audioEnabled, accessibility.language, displaySentence, pred.currentGesture]);
+    if (text) speak(text, LANGUAGE_BCP47[accessibility.language] ?? 'en-US', onMissingVoice);
+  }, [accessibility.audioEnabled, accessibility.language, displaySentence, pred.currentGesture, onMissingVoice]);
 
   useEffect(() => {
     return () => {
@@ -394,7 +411,12 @@ export default function RecognizePage() {
         <div className="flex flex-col items-end gap-2 flex-shrink-0">
           <LanguageSelector
             value={language}
-            onChange={code => setAccessibility({ language: code })}
+            onChange={code => {
+              setAccessibility({ language: code });
+              if (audioEnabledRef.current && piperHasVoice(code)) {
+                void preWarmPiper(code);
+              }
+            }}
           />
           {modelError && (
             <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-destructive/10 border border-destructive/20">

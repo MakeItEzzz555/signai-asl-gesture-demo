@@ -9,11 +9,15 @@
  * - About / system info
  */
 
-import { Sun, Moon, Contrast, Type, Volume2, VolumeX, Mic, Info, Globe } from 'lucide-react';
+import { Sun, Moon, Contrast, Type, Volume2, VolumeX, Mic, Info, Globe, Wifi } from 'lucide-react';
 import { useApp } from '../contexts/AppContext';
 import { useTheme } from '../contexts/ThemeContext';
 import { cn } from '@/lib/utils';
 import LanguageSelector from '../components/LanguageSelector';
+import { toast } from 'sonner';
+import { speak } from '../utils/tts';
+import { preWarmPiper, piperHasVoice } from '../utils/piperFallback';
+import { LANGUAGE_BCP47, LANGUAGES, translateGesture } from '../i18n/translations';
 
 function SettingRow({ icon: Icon, title, description, children }: {
   icon: React.ElementType;
@@ -134,7 +138,12 @@ export default function SettingsPage() {
         >
           <LanguageSelector
             value={accessibility.language}
-            onChange={code => setAccessibility({ language: code })}
+            onChange={code => {
+              setAccessibility({ language: code });
+              if (accessibility.audioEnabled && piperHasVoice(code)) {
+                void preWarmPiper(code);
+              }
+            }}
           />
         </SettingRow>
       </div>
@@ -195,14 +204,28 @@ export default function SettingsPage() {
           />
         </SettingRow>
 
+        <SettingRow
+          icon={Wifi}
+          title="Online Voices"
+          description="Use cloud speech synthesis for natural-sounding voices in all languages (Greek, Japanese, Korean, Hindi, etc.). When enabled, recognized text is sent to the speech provider."
+        >
+          <Toggle
+            checked={accessibility.useCloudTts}
+            onChange={() => setAccessibility({ useCloudTts: !accessibility.useCloudTts })}
+          />
+        </SettingRow>
+
         {/* Speech test */}
         <div className="mt-3 pt-3 border-t border-border">
           <button
             onClick={() => {
-              if (accessibility.audioEnabled && 'speechSynthesis' in window) {
-                const u = new SpeechSynthesisUtterance('Hello, sign language assistant is ready.');
-                window.speechSynthesis.speak(u);
-              }
+              if (!accessibility.audioEnabled) return;
+              const lang = accessibility.language;
+              const bcp47 = LANGUAGE_BCP47[lang] ?? 'en-US';
+              speak(translateGesture('hello', lang), bcp47, (missingLang) => {
+                const name = LANGUAGES.find(l => l.code === missingLang.split('-')[0])?.nativeName ?? missingLang;
+                toast.warning(`No ${name} voice is installed on this device — speech is unavailable for this language.`);
+              });
             }}
             disabled={!accessibility.audioEnabled}
             className="flex items-center gap-2 px-4 py-2 rounded-lg bg-muted text-foreground border border-border text-sm font-medium hover:bg-accent transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
@@ -245,7 +268,9 @@ export default function SettingsPage() {
           </div>
           <div className="flex justify-between">
             <span>Data Privacy</span>
-            <span className="text-success">100% client-side · No server</span>
+            <span className={accessibility.useCloudTts ? 'text-warning' : 'text-success'}>
+              {accessibility.useCloudTts ? 'Online voices on · text sent to provider' : '100% client-side · No server'}
+            </span>
           </div>
         </div>
         <div className="mt-4 p-3 rounded-lg bg-muted/50 border border-border flex items-start gap-2">
