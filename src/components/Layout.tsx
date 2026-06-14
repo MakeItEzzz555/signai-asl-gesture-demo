@@ -86,7 +86,7 @@ export default function Layout({ children }: LayoutProps) {
               </div>
               <div className="flex flex-col">
                 <span className="text-xs font-bold text-primary" style={{ fontFamily: 'Space Grotesk' }}>
-                  SignAI
+                  Gesto
                 </span>
                 <span className="text-[10px] text-muted-foreground">v1.0</span>
               </div>
