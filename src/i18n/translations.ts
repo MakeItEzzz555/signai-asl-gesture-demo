@@ -155,6 +155,8 @@ export function translateGesture(
   const key = normalizeGestureLabel(label);
   const customTranslation = customTranslations?.[key]?.[lang]?.trim();
   if (customTranslation) return customTranslation;
+  const englishCustomTranslation = customTranslations?.[key]?.en?.trim();
+  if (englishCustomTranslation) return englishCustomTranslation;
   const map = GESTURE_TRANSLATIONS[key];
   if (!map) return label;
   return map[lang] ?? label;

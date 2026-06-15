@@ -457,7 +457,8 @@ export default function RecognizePage() {
 
       const result = predictCustomModel(features);
       const candidate = getCustomGestureCandidate(result);
-      const onnxDefaultActive = onnxLiveGestureRef.current !== null && onnxLiveConfidenceRef.current >= 80;
+      const customLocked = customDisplayActiveRef.current;
+      const onnxDefaultActive = !customLocked && onnxLiveGestureRef.current !== null && onnxLiveConfidenceRef.current >= 80;
       const liveLabel = !onnxDefaultActive ? candidate?.label ?? null : null;
       const confidence = !onnxDefaultActive ? candidate?.confidence ?? 0 : 0;
       const customStep = customFsmRef.current.step({
@@ -469,11 +470,11 @@ export default function RecognizePage() {
       const isCustomCoolingDown = customStep.snapshot.state === 'COOLDOWN';
       const emittedHandOnlyWord = faceActiveRef.current ? null : customStep.emittedWord;
       const displayLiveLabel = isCustomCoolingDown ? null : liveLabel;
-      customDisplayActiveRef.current = customDisplayActiveRef.current || Boolean(
-        displayLiveLabel ||
-        emittedHandOnlyWord ||
-        customStep.snapshot.state !== 'IDLE'
-      );
+      if (!candidate && customStep.snapshot.state === 'IDLE') {
+        customDisplayActiveRef.current = false;
+      } else if (displayLiveLabel || emittedHandOnlyWord || customStep.snapshot.state !== 'IDLE') {
+        customDisplayActiveRef.current = true;
+      }
 
       rightLiveGestureRef.current = displayLiveLabel;
       dispatch({
@@ -519,12 +520,11 @@ export default function RecognizePage() {
           const onnxHasLiveDefault = Boolean(onnxLiveLabel && mappedResult.liveConfidence >= 80);
           onnxLiveGestureRef.current = onnxHasLiveDefault ? onnxLiveLabel : null;
           onnxLiveConfidenceRef.current = onnxHasLiveDefault ? mappedResult.liveConfidence : 0;
-          if (onnxHasLiveDefault) customDisplayActiveRef.current = false;
-          rightLiveGestureRef.current = onnxLiveLabel;
+          const customProtected = recognizerModeRef.current === 'hybrid' && customDisplayActiveRef.current;
+          if (onnxHasLiveDefault && !customProtected) customDisplayActiveRef.current = false;
+          if (!customProtected) rightLiveGestureRef.current = onnxLiveLabel;
           if (
-            recognizerModeRef.current === 'hybrid' &&
-            customDisplayActiveRef.current &&
-            !onnxHasLiveDefault
+            customProtected
           ) {
             return;
           }
