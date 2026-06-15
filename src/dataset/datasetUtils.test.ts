@@ -6,10 +6,10 @@ import {
 } from './datasetUtils';
 import type { GestureSample } from '../contexts/AppContext';
 
-function makeSample(label = 'Hello'): GestureSample {
+function makeSample(label = 'Hello', dim = 156): GestureSample {
   return {
     label,
-    landmarks: new Array(156).fill(0),
+    landmarks: new Array(dim).fill(0),
     timestamp: 123,
   };
 }
@@ -17,10 +17,11 @@ function makeSample(label = 'Hello'): GestureSample {
 describe('dataset import/export', () => {
   it('keeps legacy array exports when no custom translations exist', () => {
     const samples = [makeSample()];
+    const expected = [makeSample('Hello', 63)];
     const parsed = JSON.parse(exportDatasetJSON(samples));
 
     expect(Array.isArray(parsed)).toBe(true);
-    expect(parseImportedDataset(JSON.stringify(parsed))).toEqual(samples);
+    expect(parseImportedDataset(JSON.stringify(parsed))).toEqual(expected);
   });
 
   it('exports and imports samples with custom translations', () => {
@@ -33,7 +34,7 @@ describe('dataset import/export', () => {
 
     const parsed = parseImportedDatasetBundle(json);
 
-    expect(parsed.samples).toEqual(samples);
+    expect(parsed.samples).toEqual([makeSample('Fuck you', 63)]);
     expect(parsed.customTranslations).toEqual({
       'fuck you': {
         el: 'Custom Greek text',
@@ -45,8 +46,9 @@ describe('dataset import/export', () => {
     const samples = [makeSample('Help')];
     const parsed = parseImportedDatasetBundle(JSON.stringify(samples));
 
-    expect(parsed.samples).toEqual(samples);
+    expect(parsed.samples).toEqual([makeSample('Help', 63)]);
     expect(parsed.customTranslations).toEqual({});
+    expect(parsed.convertedToHandOnlyCount).toBe(1);
   });
 
   it('normalizes imported custom translation labels and ignores invalid language keys', () => {
@@ -67,5 +69,13 @@ describe('dataset import/export', () => {
         el: 'Custom Greek text',
       },
     });
+  });
+
+  it('keeps hand-only imports as hand-only without conversion notice count', () => {
+    const samples = [makeSample('Hello', 63)];
+    const parsed = parseImportedDatasetBundle(JSON.stringify(samples));
+
+    expect(parsed.samples).toEqual(samples);
+    expect(parsed.convertedToHandOnlyCount).toBe(0);
   });
 });

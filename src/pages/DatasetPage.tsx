@@ -7,18 +7,26 @@
  * - Delete individual classes or clear all
  */
 
-import { useState, useRef, useCallback, useEffect } from 'react';
+import { useState, useRef, useCallback, useEffect, useMemo } from 'react';
 import { Camera, Download, Upload, Trash2, Plus, CheckCircle, AlertCircle, StopCircle } from 'lucide-react';
 import { useApp, DEFAULT_GESTURES } from '../contexts/AppContext';
 import { useMediaPipe } from '../hooks/useMediaPipe';
-import { downloadDataset, parseImportedDatasetBundle, getSampleCounts, generateDemoDataset } from '../dataset/datasetUtils';
+import {
+  downloadDataset,
+  parseImportedDatasetBundle,
+  getSampleCounts,
+  generateDemoDataset,
+  isFaceInteractiveGesture,
+} from '../dataset/datasetUtils';
 import { LANGUAGES, normalizeGestureLabel } from '../i18n/translations';
 import type { Landmark } from '../utils/landmarks';
+import { toHandOnlyFeatures } from '../utils/landmarks';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 
 const MIN_SAMPLES_PER_CLASS = 20;
 const CAPTURE_INTERVAL_MS = 200; // Capture one sample every 200ms when recording
+const TRAINABLE_DEFAULT_GESTURES = DEFAULT_GESTURES.filter(gesture => !isFaceInteractiveGesture(gesture));
 
 export default function DatasetPage() {
   const {
@@ -33,7 +41,7 @@ export default function DatasetPage() {
     setCustomTranslation,
     mergeCustomTranslations,
   } = useApp();
-  const [selectedGesture, setSelectedGesture] = useState(DEFAULT_GESTURES[0]);
+  const [selectedGesture, setSelectedGesture] = useState(TRAINABLE_DEFAULT_GESTURES[0] ?? DEFAULT_GESTURES[0]);
   const [customGesture, setCustomGesture] = useState('');
   const [customGestureTranslation, setCustomGestureTranslation] = useState('');
   const [selectedTranslation, setSelectedTranslation] = useState('');
@@ -48,12 +56,13 @@ export default function DatasetPage() {
   const onLandmarks = useCallback((features: number[], _raw: Landmark[] | null, handPresent: boolean, _isHeld: boolean, _rawLeft?: Landmark[] | null, _face?: Landmark[] | null) => {
     // Store features whenever ANY hand is present (right or left)
     const anyHandPresent = handPresent || (_rawLeft != null);
-    latestFeaturesRef.current = anyHandPresent ? features : null;
+    latestFeaturesRef.current = anyHandPresent ? toHandOnlyFeatures(features) : null;
   }, []);
 
   const { videoRef, canvasRef, state: camState, start, stop } = useMediaPipe({
     onLandmarks,
     showOverlay: true,
+    enableFaceTracking: false,
   });
 
   const sampleCounts = getSampleCounts(dataset);
@@ -65,10 +74,10 @@ export default function DatasetPage() {
   );
 
   // All available gestures (default + any custom ones in dataset)
-  const allGestures = Array.from(new Set([
-    ...DEFAULT_GESTURES,
-    ...dataset.labels.filter(l => !DEFAULT_GESTURES.includes(l)),
-  ]));
+  const allGestures = useMemo(() => Array.from(new Set([
+    ...TRAINABLE_DEFAULT_GESTURES,
+    ...dataset.labels.filter(l => !DEFAULT_GESTURES.includes(l) && !isFaceInteractiveGesture(l)),
+  ])), [dataset.labels]);
 
   const startRecording = useCallback(() => {
     if (!camState.isActive) {
@@ -134,15 +143,22 @@ export default function DatasetPage() {
     try {
       const text = await file.text();
       const parsed = parseImportedDatasetBundle(text);
-      const { samples } = parsed;
+      const samples = parsed.samples.filter(sample => !isFaceInteractiveGesture(sample.label));
+      const skippedFaceSamples = parsed.samples.length - samples.length;
+      if (samples.length === 0) {
+        toast.error(skippedFaceSamples > 0
+          ? `No trainable hand-only samples found; skipped ${skippedFaceSamples} face-touch samples`
+          : 'No samples found in dataset');
+        return;
+      }
       if (importModeRef.current === 'merge') {
         mergeDataset(samples);
         mergeCustomTranslations(parsed.customTranslations);
-        toast.success(`Added ${describeSamples(samples)}`);
+        toast.success(`Added ${describeSamples(samples)}${parsed.convertedToHandOnlyCount > 0 ? `; converted ${parsed.convertedToHandOnlyCount} old samples to hand-only` : ''}${skippedFaceSamples > 0 ? `; skipped ${skippedFaceSamples} face-touch samples` : ''}`);
       } else {
         importDataset(samples);
         mergeCustomTranslations(parsed.customTranslations);
-        toast.success(`Imported ${describeSamples(samples)}`);
+        toast.success(`Imported ${describeSamples(samples)}${parsed.convertedToHandOnlyCount > 0 ? `; converted ${parsed.convertedToHandOnlyCount} old samples to hand-only` : ''}${skippedFaceSamples > 0 ? `; skipped ${skippedFaceSamples} face-touch samples` : ''}`);
       }
     } catch (err) {
       toast.error(`Import failed: ${err instanceof Error ? err.message : 'Invalid file'}`);
@@ -152,7 +168,7 @@ export default function DatasetPage() {
   };
 
   const handleLoadStarterDataset = () => {
-    const samples = generateDemoDataset(DEFAULT_GESTURES, 30);
+    const samples = generateDemoDataset(TRAINABLE_DEFAULT_GESTURES, 30);
     if (samples.length === 0) {
       toast.error('Starter dataset could not be generated');
       return;
@@ -171,6 +187,10 @@ export default function DatasetPage() {
   const handleAddCustom = () => {
     const name = customGesture.trim();
     if (!name) return;
+    if (isFaceInteractiveGesture(name)) {
+      toast.error('Face-touch gestures are handled in Recognize and are not trained here');
+      return;
+    }
     if (allGestures.includes(name)) {
       toast.error('Gesture already exists');
       return;
@@ -187,6 +207,12 @@ export default function DatasetPage() {
   useEffect(() => {
     setSelectedTranslation(customTranslations[selectedGestureKey]?.[currentLanguage] ?? '');
   }, [customTranslations, currentLanguage, selectedGestureKey]);
+
+  useEffect(() => {
+    if (allGestures.length > 0 && !allGestures.includes(selectedGesture)) {
+      setSelectedGesture(allGestures[0]);
+    }
+  }, [allGestures, selectedGesture]);
 
   const handleSelectedTranslationChange = (value: string) => {
     setSelectedTranslation(value);
@@ -228,9 +254,6 @@ export default function DatasetPage() {
                 )}
                 {camState.leftRawLandmarks && (
                   <span className="text-orange-400">Left Hand</span>
-                )}
-                {camState.facePresent && (
-                  <span className="text-purple-400">Face</span>
                 )}
               </div>
             </div>

@@ -34,6 +34,7 @@ import {
   type SegmentationState,
   type SequencePrediction,
 } from '../ml/inferenceModel';
+import { SegmentationFSM } from '../ml/segmentationFSM';
 import {
   predict as predictCustomModel,
   isModelReady as isCustomModelReady,
@@ -53,7 +54,6 @@ import LanguageSelector from '../components/LanguageSelector';
 const CONFIDENCE_THRESHOLD = Math.round(DEFAULT_SEGMENTATION_CONFIG.confidenceThreshold * 100);
 const CONFIRMATION_FRAMES = DEFAULT_SEGMENTATION_CONFIG.confirmFrames;
 const BUFFER_FRAMES = SEQUENCE_FRAMES;
-const CUSTOM_EMIT_COOLDOWN_FRAMES = 24;
 
 type RecognizerMode = 'onnx' | 'hybrid';
 
@@ -170,8 +170,11 @@ type PredictionAction =
         liveLabel: string | null;
         liveConfidence: number;
         allScores: { label: string; score: number }[];
+        fsmState: SegmentationState;
         stableCount: number;
         cooldownFrames: number;
+        blankStableCount: number;
+        blankStableRequired: number;
         emittedWord: string | null;
       };
     }
@@ -219,11 +222,11 @@ function predictionReducer(state: PredictionState, action: PredictionAction): Pr
         ...state,
         liveGesture: action.result.liveLabel,
         liveConfidence: action.result.liveConfidence,
-        fsmState: action.result.liveLabel ? 'GESTURE_ACTIVE' : 'IDLE',
+        fsmState: action.result.fsmState,
         stableCount: action.result.stableCount,
         cooldownFrames: action.result.cooldownFrames,
-        blankStableCount: 0,
-        blankStableRequired: 0,
+        blankStableCount: action.result.blankStableCount,
+        blankStableRequired: action.result.blankStableRequired,
         bufferSize: action.result.liveLabel ? 1 : 0,
         motionEnergy: 0,
         topPredictions: action.result.allScores.filter(s => s.label !== 'blank').slice(0, 3),
@@ -284,9 +287,7 @@ export default function RecognizePage() {
   const recognizerModeRef = useRef<RecognizerMode>('onnx');
   const rightBusyRef = useRef(false);
   const rightLiveGestureRef = useRef<string | null>(null);
-  const customLastLabelRef = useRef<string | null>(null);
-  const customStableCountRef = useRef(0);
-  const customCooldownRef = useRef(0);
+  const customFsmRef = useRef(new SegmentationFSM(DEFAULT_SEGMENTATION_CONFIG));
 
   // Stable refs so onLandmarks (empty deps) always reads current values
   // without needing to recreate the callback on every change.
@@ -316,9 +317,7 @@ export default function RecognizePage() {
   const faceHoldRef          = useRef(0);
 
   const resetCustomPredictionState = useCallback(() => {
-    customLastLabelRef.current = null;
-    customStableCountRef.current = 0;
-    customCooldownRef.current = 0;
+    customFsmRef.current.reset();
   }, []);
 
   useEffect(() => {
@@ -407,45 +406,34 @@ export default function RecognizePage() {
 
       const result = predictCustomModel(features);
       const liveLabel = result && result.confidence >= CONFIDENCE_THRESHOLD ? result.label : null;
-      if (customCooldownRef.current > 0) customCooldownRef.current--;
+      const confidence = result?.confidence ?? 0;
+      const customStep = customFsmRef.current.step({
+        predictedLabel: liveLabel,
+        confidenceProb: confidence / 100,
+        isBlankLike: !liveLabel || !handPresent || isHeld,
+        isLowMotion: false,
+      });
+      const isCustomCoolingDown = customStep.snapshot.state === 'COOLDOWN';
+      const emittedHandOnlyWord = faceActiveRef.current ? null : customStep.emittedWord;
+      const displayLiveLabel = isCustomCoolingDown ? null : liveLabel;
 
-      if (!liveLabel) {
-        resetCustomPredictionState();
-      }
-
-      if (liveLabel && liveLabel === customLastLabelRef.current) {
-        customStableCountRef.current = Math.min(CONFIRMATION_FRAMES, customStableCountRef.current + 1);
-      } else {
-        customLastLabelRef.current = liveLabel;
-        customStableCountRef.current = liveLabel ? 1 : 0;
-      }
-
-      let emittedWord: string | null = null;
-      if (
-        liveLabel &&
-        customStableCountRef.current >= CONFIRMATION_FRAMES &&
-        customCooldownRef.current === 0
-      ) {
-        emittedWord = liveLabel;
-        customCooldownRef.current = CUSTOM_EMIT_COOLDOWN_FRAMES;
-      }
-
-      const emittedHandOnlyWord = faceActiveRef.current ? null : emittedWord;
-      rightLiveGestureRef.current = liveLabel;
+      rightLiveGestureRef.current = displayLiveLabel;
       dispatch({
         type: 'UPDATE_CUSTOM',
         result: {
-          liveLabel,
-          liveConfidence: result?.confidence ?? 0,
+          liveLabel: displayLiveLabel,
+          liveConfidence: displayLiveLabel ? confidence : 0,
           allScores: result?.allScores ?? [],
-          stableCount: customStableCountRef.current,
-          cooldownFrames: customCooldownRef.current,
+          fsmState: customStep.snapshot.state,
+          stableCount: customStep.snapshot.stableCount,
+          cooldownFrames: customStep.snapshot.cooldown,
+          blankStableCount: customStep.snapshot.blankStableCount,
+          blankStableRequired: customStep.snapshot.blankStableRequired,
           emittedWord: emittedHandOnlyWord,
         },
       });
 
       if (emittedHandOnlyWord) {
-        const confidence = result?.confidence ?? 0;
         setRecognizedWordsRef.current(prev => [
           { word: emittedHandOnlyWord, confidence, timestamp: Date.now() },
           ...prev.slice(0, 49),

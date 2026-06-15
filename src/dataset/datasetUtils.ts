@@ -5,6 +5,7 @@ import {
   type CustomTranslations,
   type LanguageCode,
 } from '../i18n/translations';
+import { FEATURE_DIM_HAND, FEATURE_DIM_EXTENDED, toHandOnlyFeatures } from '../utils/landmarks';
 
 export function oneHotEncode(labels: string[], labelNames: string[]): number[][] {
   return labels.map(label => {
@@ -15,13 +16,18 @@ export function oneHotEncode(labels: string[], labelNames: string[]): number[][]
   });
 }
 
-const FACE_INTERACTIVE_GESTURES = new Set([
+export const FACE_INTERACTIVE_GESTURES = new Set([
   'think', 'know', 'father', 'mother', 'eat',
   'drink', 'sleep', 'hot', 'beautiful', 'old',
+  'eat / speak', 'see / look', 'smell', 'listen',
 ]);
 
 function canonicalLabel(label: string): string {
   return label.trim().toLowerCase().replace(/[_-]+/g, ' ');
+}
+
+export function isFaceInteractiveGesture(label: string): boolean {
+  return FACE_INTERACTIVE_GESTURES.has(canonicalLabel(label));
 }
 
 function mirrorHand63(hand63: number[]): number[] {
@@ -33,22 +39,7 @@ function mirrorHand63(hand63: number[]): number[] {
 }
 
 function mirrorFeatures(features: number[]): number[] {
-  // Legacy vectors: one hand only.
-  if (features.length === 63) {
-    return mirrorHand63(features);
-  }
-
-  // Extended vectors: swap right/left slots, mirror x in both hand slots.
-  if (features.length >= 126) {
-    const right = features.slice(0, 63);
-    const left = features.slice(63, 126);
-    const face = features.slice(126);
-    const mirroredRight = mirrorHand63(left);
-    const mirroredLeft = mirrorHand63(right);
-    return [...mirroredRight, ...mirroredLeft, ...face];
-  }
-
-  return [...features];
+  return mirrorHand63(toHandOnlyFeatures(features));
 }
 
 export function splitDataset(
@@ -75,14 +66,14 @@ export function prepareTensors(
   const labelStrings: string[] = [];
 
   for (const s of samples) {
-    features.push(s.landmarks);
+    if (isFaceInteractiveGesture(s.label)) continue;
+
+    const handOnly = toHandOnlyFeatures(s.landmarks);
+    features.push(handOnly);
     labelStrings.push(s.label);
 
-    // Mirror augmentation for non-face labels improves left/right invariance.
-    if (!FACE_INTERACTIVE_GESTURES.has(canonicalLabel(s.label))) {
-      features.push(mirrorFeatures(s.landmarks));
-      labelStrings.push(s.label);
-    }
+    features.push(mirrorFeatures(handOnly));
+    labelStrings.push(s.label);
   }
 
   const labels = oneHotEncode(labelStrings, labelNames);
@@ -99,6 +90,7 @@ export interface DatasetExportBundle {
 export interface ParsedDatasetImport {
   samples: GestureSample[];
   customTranslations: CustomTranslations;
+  convertedToHandOnlyCount: number;
 }
 
 function hasCustomTranslations(customTranslations?: CustomTranslations): boolean {
@@ -109,13 +101,18 @@ export function exportDatasetJSON(
   samples: GestureSample[],
   customTranslations?: CustomTranslations
 ): string {
+  const handOnlySamples = samples.map(sample => ({
+    ...sample,
+    landmarks: toHandOnlyFeatures(sample.landmarks),
+  }));
+
   if (!hasCustomTranslations(customTranslations)) {
-    return JSON.stringify(samples, null, 2);
+    return JSON.stringify(handOnlySamples, null, 2);
   }
 
   const bundle: DatasetExportBundle = {
     version: 2,
-    samples,
+    samples: handOnlySamples,
     customTranslations,
   };
   return JSON.stringify(bundle, null, 2);
@@ -136,25 +133,31 @@ export function downloadDataset(
   URL.revokeObjectURL(url);
 }
 
-function parseSampleArray(data: unknown): GestureSample[] {
+function parseSampleArray(data: unknown): { samples: GestureSample[]; convertedToHandOnlyCount: number } {
   if (!Array.isArray(data)) throw new Error('Dataset samples must be a JSON array');
 
-  return data.map((item: unknown, i: number) => {
+  let convertedToHandOnlyCount = 0;
+  const samples = data.map((item: unknown, i: number) => {
     const obj = item as Record<string, unknown>;
     if (typeof obj.label !== 'string') throw new Error(`Sample ${i}: missing "label" string`);
     if (!Array.isArray(obj.landmarks)) throw new Error(`Sample ${i}: missing "landmarks" array`);
-    if (obj.landmarks.length !== 63 && obj.landmarks.length !== 156) {
-      throw new Error(`Sample ${i}: landmarks must have 63 (legacy) or 156 (extended) values, got ${obj.landmarks.length}`);
+    if (obj.landmarks.length !== FEATURE_DIM_HAND && obj.landmarks.length !== FEATURE_DIM_EXTENDED) {
+      throw new Error(`Sample ${i}: landmarks must have ${FEATURE_DIM_HAND} (hand-only) or ${FEATURE_DIM_EXTENDED} (legacy extended) values, got ${obj.landmarks.length}`);
     }
     if (obj.landmarks.some((v: unknown) => typeof v !== 'number' || !Number.isFinite(v))) {
       throw new Error(`Sample ${i}: landmarks contain non-finite values (NaN or Infinity)`);
     }
+    if (obj.landmarks.length === FEATURE_DIM_EXTENDED) {
+      convertedToHandOnlyCount += 1;
+    }
     return {
       label: obj.label as string,
-      landmarks: obj.landmarks as number[],
+      landmarks: toHandOnlyFeatures(obj.landmarks as number[]),
       timestamp: typeof obj.timestamp === 'number' ? obj.timestamp : Date.now(),
     };
   });
+
+  return { samples, convertedToHandOnlyCount };
 }
 
 function parseCustomTranslations(data: unknown): CustomTranslations {
@@ -184,9 +187,11 @@ function parseCustomTranslations(data: unknown): CustomTranslations {
 export function parseImportedDatasetBundle(json: string): ParsedDatasetImport {
   const data = JSON.parse(json);
   if (Array.isArray(data)) {
+    const parsed = parseSampleArray(data);
     return {
-      samples: parseSampleArray(data),
+      samples: parsed.samples,
       customTranslations: {},
+      convertedToHandOnlyCount: parsed.convertedToHandOnlyCount,
     };
   }
 
@@ -195,9 +200,11 @@ export function parseImportedDatasetBundle(json: string): ParsedDatasetImport {
   }
 
   const obj = data as Record<string, unknown>;
+  const parsed = parseSampleArray(obj.samples);
   return {
-    samples: parseSampleArray(obj.samples),
+    samples: parsed.samples,
     customTranslations: parseCustomTranslations(obj.customTranslations),
+    convertedToHandOnlyCount: parsed.convertedToHandOnlyCount,
   };
 }
 
@@ -1222,7 +1229,7 @@ export function generateDemoDataset(
     if (!seed) continue;
 
     for (let i = 0; i < samplesPerGesture; i++) {
-      const landmarks = seed.map(v => v + noise());
+      const landmarks = toHandOnlyFeatures(seed.map(v => v + noise()));
       samples.push({
         label: gesture,
         landmarks,
