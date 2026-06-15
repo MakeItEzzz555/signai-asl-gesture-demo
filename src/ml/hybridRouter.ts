@@ -5,6 +5,7 @@ export type HybridSource = 'IDLE' | 'ONNX_ACTIVE' | 'CUSTOM_ACTIVE';
 export const CUSTOM_ACTIVATE_CONFIDENCE = 95;
 export const CUSTOM_ACTIVATE_MARGIN = 15;
 export const ONNX_ACTIVATE_CONFIDENCE = 80;
+export const ONNX_BLOCK_CUSTOM_CONFIDENCE = 45;
 export const CUSTOM_RELEASE_FRAMES = 10;
 export const ONNX_RELEASE_FRAMES = 8;
 export const SOURCE_SWITCH_COOLDOWN_FRAMES = 6;
@@ -78,6 +79,10 @@ export class HybridRouter {
     return Boolean(input.onnxLabel && input.onnxConfidence >= ONNX_ACTIVATE_CONFIDENCE);
   }
 
+  private hasOnnxDefaultPresence(input: HybridRouterInput): boolean {
+    return Boolean(input.onnxLabel && input.onnxConfidence >= ONNX_BLOCK_CUSTOM_CONFIDENCE);
+  }
+
   private hasValidCustom(input: HybridRouterInput): boolean {
     return Boolean(input.customLabel && input.customConfidence >= CUSTOM_ACTIVATE_CONFIDENCE);
   }
@@ -125,6 +130,16 @@ export class HybridRouter {
       return;
     }
 
+    if (this.hasOnnxDefaultPresence(input)) {
+      this.snapshot = {
+        ...this.snapshot,
+        activeLabel: null,
+        activeConfidence: 0,
+        releaseFrames: 0,
+      };
+      return;
+    }
+
     if (this.hasValidCustom(input)) {
       this.snapshot = {
         source: 'CUSTOM_ACTIVE',
@@ -146,7 +161,7 @@ export class HybridRouter {
   }
 
   private stepOnnxActive(input: HybridRouterInput) {
-    const onnxHolding = this.hasValidOnnx(input) || isActiveState(input.onnxState);
+    const onnxHolding = this.hasOnnxDefaultPresence(input) || isActiveState(input.onnxState);
     if (onnxHolding) {
       this.snapshot = {
         ...this.snapshot,

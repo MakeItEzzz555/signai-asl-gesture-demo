@@ -371,6 +371,8 @@ export default function RecognizePage() {
   const hybridRouterRef = useRef(new HybridRouter());
   const customFsmRef = useRef(new SegmentationFSM(CUSTOM_SEGMENTATION_CONFIG));
   const pendingCustomSwitchRef = useRef<{ label: string | null; frames: number }>({ label: null, frames: 0 });
+  const lastEmittedHandOnlyWordRef = useRef<string | null>(null);
+  const handReleasedSinceLastEmitRef = useRef(true);
 
   // Stable refs so onLandmarks (empty deps) always reads current values
   // without needing to recreate the callback on every change.
@@ -403,6 +405,8 @@ export default function RecognizePage() {
     customFsmRef.current.reset();
     hybridRouterRef.current.reset();
     pendingCustomSwitchRef.current = { label: null, frames: 0 };
+    lastEmittedHandOnlyWordRef.current = null;
+    handReleasedSinceLastEmitRef.current = true;
   }, []);
 
   useEffect(() => {
@@ -444,6 +448,28 @@ export default function RecognizePage() {
     [recognizedWords, language, customTranslations],
   );
 
+  const emitHandOnlyWord = useCallback((word: string, confidence: number): boolean => {
+    const canonicalWord = canonicalLabel(word);
+    const isSameHeldWord = lastEmittedHandOnlyWordRef.current === canonicalWord &&
+      !handReleasedSinceLastEmitRef.current;
+    if (isSameHeldWord) return false;
+
+    lastEmittedHandOnlyWordRef.current = canonicalWord;
+    handReleasedSinceLastEmitRef.current = false;
+    setRecognizedWordsRef.current(prev => [
+      { word, confidence, timestamp: Date.now() },
+      ...prev.slice(0, 49),
+    ]);
+    if (autoSpeakRef.current && audioEnabledRef.current) {
+      speak(
+        translateGesture(word, languageRef.current, customTranslationsRef.current),
+        LANGUAGE_BCP47[languageRef.current] ?? 'en-US',
+        onMissingVoiceRef.current,
+      );
+    }
+    return true;
+  }, []);
+
   const onLandmarks = useCallback((
     features: number[],
     rawRight: Landmark[] | null,
@@ -456,6 +482,9 @@ export default function RecognizePage() {
     candidateInteraction?: HandFaceInteraction | null,
   ) => {
     const faceContact = candidateInteraction ?? interaction ?? null;
+    if (!handPresent) {
+      handReleasedSinceLastEmitRef.current = true;
+    }
 
     // ── Face-interaction priority gate (synchronous) ─────────────────────────
     if (faceContact) {
@@ -543,6 +572,9 @@ export default function RecognizePage() {
 
     const dispatchCustomFrame = (frame: CustomFramePrediction, source: HybridSource) => {
       rightLiveGestureRef.current = frame.liveLabel;
+      const emittedWord = frame.emittedWord && emitHandOnlyWord(frame.emittedWord, frame.confidence)
+        ? frame.emittedWord
+        : null;
       dispatch({
         type: 'UPDATE_CUSTOM',
         result: {
@@ -554,24 +586,10 @@ export default function RecognizePage() {
           cooldownFrames: frame.cooldownFrames,
           blankStableCount: frame.blankStableCount,
           blankStableRequired: frame.blankStableRequired,
-          emittedWord: frame.emittedWord,
+          emittedWord,
           source,
         },
       });
-
-      if (frame.emittedWord) {
-        setRecognizedWordsRef.current(prev => [
-          { word: frame.emittedWord, confidence: frame.confidence, timestamp: Date.now() },
-          ...prev.slice(0, 49),
-        ]);
-        if (autoSpeakRef.current && audioEnabledRef.current) {
-          speak(
-            translateGesture(frame.emittedWord, languageRef.current, customTranslationsRef.current),
-            LANGUAGE_BCP47[languageRef.current] ?? 'en-US',
-            onMissingVoiceRef.current,
-          );
-        }
-      }
     };
 
     if (!isOnnxModelReady()) {
@@ -598,6 +616,7 @@ export default function RecognizePage() {
           if (!result) return;
           const mappedResult: SequencePrediction = result;
           const onnxLiveLabel = mappedResult.liveLabel === 'blank' ? null : mappedResult.liveLabel;
+          let activeSource: HybridSource = 'ONNX_ACTIVE';
           if (isHybrid) {
             const snapshot = hybridRouterRef.current.step({
               handPresent,
@@ -614,6 +633,9 @@ export default function RecognizePage() {
               return;
             }
 
+            activeSource = snapshot.source;
+            if (activeSource !== 'ONNX_ACTIVE') return;
+
             if (snapshot.source === 'ONNX_ACTIVE') {
               customFsmRef.current.reset();
             }
@@ -622,36 +644,21 @@ export default function RecognizePage() {
           const allowed = mappedResult.emittedWord
             ? shouldEmitGesture(mappedResult.emittedWord, interaction)
             : true;
-          const guardedResult = allowed ? mappedResult : { ...mappedResult, emittedWord: null };
+          const emittedWord = allowed && !faceActiveRef.current && mappedResult.emittedWord &&
+            emitHandOnlyWord(mappedResult.emittedWord, mappedResult.liveConfidence)
+            ? mappedResult.emittedWord
+            : null;
+          const guardedResult = { ...mappedResult, emittedWord };
           dispatch({
             type: 'UPDATE_RIGHT',
             result: guardedResult,
-            source: isHybrid ? hybridRouterRef.current.getSnapshot().source : 'ONNX_ACTIVE',
+            source: activeSource,
           });
-          if (guardedResult.emittedWord) {
-            // Suppress hand-only output when a hand-face interaction is active.
-            const suppressHandOnly = faceActiveRef.current;
-            if (!suppressHandOnly) {
-              const word = guardedResult.emittedWord;
-              const confidence = guardedResult.liveConfidence;
-              setRecognizedWordsRef.current(prev => [
-                { word, confidence, timestamp: Date.now() },
-                ...prev.slice(0, 49),
-              ]);
-              if (autoSpeakRef.current && audioEnabledRef.current) {
-                speak(
-                  translateGesture(word, languageRef.current, customTranslationsRef.current),
-                  LANGUAGE_BCP47[languageRef.current] ?? 'en-US',
-                  onMissingVoiceRef.current,
-                );
-              }
-            }
-          }
         })
         .catch(err => console.error('ONNX inference error:', err))
         .finally(() => { rightBusyRef.current = false; });
     }
-  }, []); // stable — reads all mutable values via refs
+  }, [emitHandOnlyWord]); // stable — reads all mutable values via refs
 
   const { videoRef, canvasRef, state: camState, start, stop } = useMediaPipe({
     onLandmarks,

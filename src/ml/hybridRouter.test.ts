@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   CUSTOM_RELEASE_FRAMES,
   HybridRouter,
+  ONNX_BLOCK_CUSTOM_CONFIDENCE,
   ONNX_RELEASE_FRAMES,
   SOURCE_SWITCH_COOLDOWN_FRAMES,
   type HybridRouterInput,
@@ -43,26 +44,53 @@ describe('HybridRouter', () => {
     expect(snapshot.activeLabel).toBe('yes');
   });
 
-  it('activates custom from idle only when ONNX is blank or uncertain', () => {
+  it('blocks custom from idle while ONNX has weak default presence', () => {
     const router = new HybridRouter();
 
     let snapshot = router.step(frame({
       onnxLabel: 'hello',
-      onnxConfidence: 79,
+      onnxConfidence: ONNX_BLOCK_CUSTOM_CONFIDENCE,
+      customLabel: 'custom',
+      customConfidence: 98,
+    }));
+    expect(snapshot.source).toBe('IDLE');
+
+    snapshot = router.step(frame({
+      onnxLabel: 'hello',
+      onnxConfidence: ONNX_BLOCK_CUSTOM_CONFIDENCE - 1,
       customLabel: 'custom',
       customConfidence: 98,
     }));
     expect(snapshot.source).toBe('CUSTOM_ACTIVE');
     expect(snapshot.activeLabel).toBe('custom');
+  });
 
-    router.reset();
-    snapshot = router.step(frame({
+  it('prefers ONNX over custom from idle when ONNX is strongly confident', () => {
+    const router = new HybridRouter();
+
+    const snapshot = router.step(frame({
       onnxLabel: 'hello',
       onnxConfidence: 80,
       customLabel: 'custom',
       customConfidence: 98,
     }));
     expect(snapshot.source).toBe('ONNX_ACTIVE');
+  });
+
+  it('keeps ONNX active during weak default presence and blocks custom takeover', () => {
+    const router = new HybridRouter();
+
+    router.step(frame({ onnxLabel: 'hello', onnxConfidence: 90 }));
+    const snapshot = router.step(frame({
+      onnxLabel: 'hello',
+      onnxConfidence: ONNX_BLOCK_CUSTOM_CONFIDENCE,
+      customLabel: 'custom',
+      customConfidence: 99,
+    }));
+
+    expect(snapshot.source).toBe('ONNX_ACTIVE');
+    expect(snapshot.activeLabel).toBe('hello');
+    expect(snapshot.releaseFrames).toBe(0);
   });
 
   it('keeps custom active through cooldown and ignores ONNX flicker', () => {
