@@ -36,6 +36,13 @@ import {
 } from '../ml/inferenceModel';
 import { SegmentationFSM } from '../ml/segmentationFSM';
 import {
+  CUSTOM_ACTIVATE_CONFIDENCE,
+  CUSTOM_ACTIVATE_MARGIN,
+  HybridRouter,
+  ONNX_ACTIVATE_CONFIDENCE,
+  type HybridSource,
+} from '../ml/hybridRouter';
+import {
   predict as predictCustomModel,
   isModelReady as isCustomModelReady,
   loadModel as loadCustomModel,
@@ -53,11 +60,9 @@ import LanguageSelector from '../components/LanguageSelector';
 
 const CONFIRMATION_FRAMES = DEFAULT_SEGMENTATION_CONFIG.confirmFrames;
 const BUFFER_FRAMES = SEQUENCE_FRAMES;
-const CUSTOM_CONFIDENCE_THRESHOLD = 95;
-const CUSTOM_MARGIN_THRESHOLD = 15;
 const CUSTOM_SEGMENTATION_CONFIG = {
   ...DEFAULT_SEGMENTATION_CONFIG,
-  confidenceThreshold: CUSTOM_CONFIDENCE_THRESHOLD / 100,
+  confidenceThreshold: CUSTOM_ACTIVATE_CONFIDENCE / 100,
   confirmFrames: SEQUENCE_FRAMES + 4,
 };
 
@@ -113,8 +118,8 @@ function getCustomGestureCandidate(result: ReturnType<typeof predictCustomModel>
   const margin = top.score - secondScore;
 
   if (isDefaultGestureLabel(top.label)) return null;
-  if (top.score < CUSTOM_CONFIDENCE_THRESHOLD) return null;
-  if (margin < CUSTOM_MARGIN_THRESHOLD) return null;
+  if (top.score < CUSTOM_ACTIVATE_CONFIDENCE) return null;
+  if (margin < CUSTOM_ACTIVATE_MARGIN) return null;
 
   return {
     label: top.label,
@@ -150,10 +155,29 @@ function shouldEmitGesture(
   return true;
 }
 
+function formatHybridSource(source: HybridSource): string {
+  if (source === 'ONNX_ACTIVE') return 'ONNX';
+  if (source === 'CUSTOM_ACTIVE') return 'Custom';
+  return 'Idle';
+}
+
 interface RecognizedWord {
   word: string;
   confidence: number;
   timestamp: number;
+}
+
+interface CustomFramePrediction {
+  candidateLabel: string | null;
+  liveLabel: string | null;
+  confidence: number;
+  allScores: { label: string; score: number }[];
+  fsmState: SegmentationState;
+  stableCount: number;
+  cooldownFrames: number;
+  blankStableCount: number;
+  blankStableRequired: number;
+  emittedWord: string | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -178,6 +202,7 @@ interface PredictionState {
   bufferSize: number;
   motionEnergy: number;
   topPredictions: { label: string; score: number }[];
+  hybridSource: HybridSource;
 }
 
 const INITIAL_PRED_STATE: PredictionState = {
@@ -196,10 +221,11 @@ const INITIAL_PRED_STATE: PredictionState = {
   bufferSize: 0,
   motionEnergy: 0,
   topPredictions: [],
+  hybridSource: 'IDLE',
 };
 
 type PredictionAction =
-  | { type: 'UPDATE_RIGHT'; result: SequencePrediction }
+  | { type: 'UPDATE_RIGHT'; result: SequencePrediction; source?: HybridSource }
   | {
       type: 'UPDATE_CUSTOM';
       result: {
@@ -212,13 +238,14 @@ type PredictionAction =
         blankStableCount: number;
         blankStableRequired: number;
         emittedWord: string | null;
+        source: HybridSource;
       };
     }
   | { type: 'CONFIRM_PENDING' }
   | { type: 'DISCARD_PENDING' }
   | { type: 'RESET' };
 
-function applyRightUpdate(state: PredictionState, result: SequencePrediction): PredictionState {
+function applyRightUpdate(state: PredictionState, result: SequencePrediction, source: HybridSource = 'ONNX_ACTIVE'): PredictionState {
   const liveLabel = result.liveLabel === 'blank' ? null : result.liveLabel;
   const next: PredictionState = {
     ...state,
@@ -234,6 +261,7 @@ function applyRightUpdate(state: PredictionState, result: SequencePrediction): P
     topPredictions: result.allScores.filter(s => s.label !== 'blank').slice(0, 3),
     isConfirmed: Boolean(result.lastCompletedWord),
     currentGesture: result.lastCompletedWord ?? state.currentGesture,
+    hybridSource: source,
   };
   if (result.emittedWord) {
     return {
@@ -251,7 +279,7 @@ function applyRightUpdate(state: PredictionState, result: SequencePrediction): P
 function predictionReducer(state: PredictionState, action: PredictionAction): PredictionState {
   switch (action.type) {
     case 'UPDATE_RIGHT':
-      return applyRightUpdate(state, action.result);
+      return applyRightUpdate(state, action.result, action.source);
 
     case 'UPDATE_CUSTOM': {
       const displayGesture = action.result.emittedWord
@@ -278,6 +306,7 @@ function predictionReducer(state: PredictionState, action: PredictionAction): Pr
         motionEnergy: 0,
         topPredictions: action.result.allScores.filter(s => s.label !== 'blank').slice(0, 3),
         isConfirmed,
+        hybridSource: action.result.source,
       };
       if (!action.result.emittedWord) return next;
       return {
@@ -334,9 +363,7 @@ export default function RecognizePage() {
   const recognizerModeRef = useRef<RecognizerMode>('onnx');
   const rightBusyRef = useRef(false);
   const rightLiveGestureRef = useRef<string | null>(null);
-  const onnxLiveGestureRef = useRef<string | null>(null);
-  const onnxLiveConfidenceRef = useRef(0);
-  const customDisplayActiveRef = useRef(false);
+  const hybridRouterRef = useRef(new HybridRouter());
   const customFsmRef = useRef(new SegmentationFSM(CUSTOM_SEGMENTATION_CONFIG));
 
   // Stable refs so onLandmarks (empty deps) always reads current values
@@ -368,7 +395,7 @@ export default function RecognizePage() {
 
   const resetCustomPredictionState = useCallback(() => {
     customFsmRef.current.reset();
-    customDisplayActiveRef.current = false;
+    hybridRouterRef.current.reset();
   }, []);
 
   useEffect(() => {
@@ -453,14 +480,16 @@ export default function RecognizePage() {
       }
     }
 
-    if (recognizerModeRef.current === 'hybrid' && isCustomModelReady()) {
+    const isHybrid = recognizerModeRef.current === 'hybrid' && isCustomModelReady();
+    let customFrame: CustomFramePrediction | null = null;
 
+    if (isHybrid) {
       const result = predictCustomModel(features);
-      const candidate = getCustomGestureCandidate(result);
-      const customLocked = customDisplayActiveRef.current;
-      const onnxDefaultActive = !customLocked && onnxLiveGestureRef.current !== null && onnxLiveConfidenceRef.current >= 80;
-      const liveLabel = !onnxDefaultActive ? candidate?.label ?? null : null;
-      const confidence = !onnxDefaultActive ? candidate?.confidence ?? 0 : 0;
+      const candidate = hybridRouterRef.current.getSnapshot().source === 'ONNX_ACTIVE'
+        ? null
+        : getCustomGestureCandidate(result);
+      const liveLabel = candidate?.label ?? null;
+      const confidence = candidate?.confidence ?? 0;
       const customStep = customFsmRef.current.step({
         predictedLabel: liveLabel,
         confidenceProb: confidence / 100,
@@ -468,46 +497,69 @@ export default function RecognizePage() {
         isLowMotion: false,
       });
       const isCustomCoolingDown = customStep.snapshot.state === 'COOLDOWN';
-      const emittedHandOnlyWord = faceActiveRef.current ? null : customStep.emittedWord;
-      const displayLiveLabel = isCustomCoolingDown ? null : liveLabel;
-      if (!candidate && customStep.snapshot.state === 'IDLE') {
-        customDisplayActiveRef.current = false;
-      } else if (displayLiveLabel || emittedHandOnlyWord || customStep.snapshot.state !== 'IDLE') {
-        customDisplayActiveRef.current = true;
-      }
 
-      rightLiveGestureRef.current = displayLiveLabel;
+      customFrame = {
+        candidateLabel: liveLabel,
+        liveLabel: isCustomCoolingDown ? null : liveLabel,
+        confidence,
+        allScores: result?.allScores ?? [],
+        fsmState: customStep.snapshot.state,
+        stableCount: customStep.snapshot.stableCount,
+        cooldownFrames: customStep.snapshot.cooldown,
+        blankStableCount: customStep.snapshot.blankStableCount,
+        blankStableRequired: customStep.snapshot.blankStableRequired,
+        emittedWord: faceActiveRef.current ? null : customStep.emittedWord,
+      };
+    }
+
+    const dispatchCustomFrame = (frame: CustomFramePrediction, source: HybridSource) => {
+      rightLiveGestureRef.current = frame.liveLabel;
       dispatch({
         type: 'UPDATE_CUSTOM',
         result: {
-          liveLabel: displayLiveLabel,
-          liveConfidence: displayLiveLabel ? confidence : 0,
-          allScores: result?.allScores ?? [],
-          fsmState: customStep.snapshot.state,
-          stableCount: customStep.snapshot.stableCount,
-          cooldownFrames: customStep.snapshot.cooldown,
-          blankStableCount: customStep.snapshot.blankStableCount,
-          blankStableRequired: customStep.snapshot.blankStableRequired,
-          emittedWord: emittedHandOnlyWord,
+          liveLabel: frame.liveLabel,
+          liveConfidence: frame.liveLabel ? frame.confidence : 0,
+          allScores: frame.allScores,
+          fsmState: frame.fsmState,
+          stableCount: frame.stableCount,
+          cooldownFrames: frame.cooldownFrames,
+          blankStableCount: frame.blankStableCount,
+          blankStableRequired: frame.blankStableRequired,
+          emittedWord: frame.emittedWord,
+          source,
         },
       });
 
-      if (emittedHandOnlyWord) {
+      if (frame.emittedWord) {
         setRecognizedWordsRef.current(prev => [
-          { word: emittedHandOnlyWord, confidence, timestamp: Date.now() },
+          { word: frame.emittedWord, confidence: frame.confidence, timestamp: Date.now() },
           ...prev.slice(0, 49),
         ]);
         if (autoSpeakRef.current && audioEnabledRef.current) {
           speak(
-            translateGesture(emittedHandOnlyWord, languageRef.current, customTranslationsRef.current),
+            translateGesture(frame.emittedWord, languageRef.current, customTranslationsRef.current),
             LANGUAGE_BCP47[languageRef.current] ?? 'en-US',
             onMissingVoiceRef.current,
           );
         }
       }
-    }
+    };
 
-    if (!isOnnxModelReady()) return;
+    if (!isOnnxModelReady()) {
+      if (isHybrid && customFrame) {
+        const snapshot = hybridRouterRef.current.step({
+          handPresent,
+          onnxLabel: null,
+          onnxConfidence: 0,
+          onnxState: 'IDLE',
+          customLabel: customFrame.candidateLabel,
+          customConfidence: customFrame.confidence,
+          customState: customFrame.fsmState,
+        });
+        if (snapshot.source === 'CUSTOM_ACTIVE') dispatchCustomFrame(customFrame, snapshot.source);
+      }
+      return;
+    }
 
     // Primary-hand ONNX pipeline.
     if (!rightBusyRef.current) {
@@ -517,22 +569,36 @@ export default function RecognizePage() {
           if (!result) return;
           const mappedResult: SequencePrediction = result;
           const onnxLiveLabel = mappedResult.liveLabel === 'blank' ? null : mappedResult.liveLabel;
-          const onnxHasLiveDefault = Boolean(onnxLiveLabel && mappedResult.liveConfidence >= 80);
-          onnxLiveGestureRef.current = onnxHasLiveDefault ? onnxLiveLabel : null;
-          onnxLiveConfidenceRef.current = onnxHasLiveDefault ? mappedResult.liveConfidence : 0;
-          const customProtected = recognizerModeRef.current === 'hybrid' && customDisplayActiveRef.current;
-          if (onnxHasLiveDefault && !customProtected) customDisplayActiveRef.current = false;
-          if (!customProtected) rightLiveGestureRef.current = onnxLiveLabel;
-          if (
-            customProtected
-          ) {
-            return;
+          if (isHybrid) {
+            const snapshot = hybridRouterRef.current.step({
+              handPresent,
+              onnxLabel: onnxLiveLabel,
+              onnxConfidence: onnxLiveLabel ? mappedResult.liveConfidence : 0,
+              onnxState: mappedResult.state,
+              customLabel: customFrame?.candidateLabel ?? null,
+              customConfidence: customFrame?.confidence ?? 0,
+              customState: customFrame?.fsmState ?? 'IDLE',
+            });
+
+            if (snapshot.source === 'CUSTOM_ACTIVE' && customFrame) {
+              dispatchCustomFrame(customFrame, snapshot.source);
+              return;
+            }
+
+            if (snapshot.source === 'ONNX_ACTIVE') {
+              customFsmRef.current.reset();
+            }
           }
+          rightLiveGestureRef.current = onnxLiveLabel;
           const allowed = mappedResult.emittedWord
             ? shouldEmitGesture(mappedResult.emittedWord, interaction)
             : true;
           const guardedResult = allowed ? mappedResult : { ...mappedResult, emittedWord: null };
-          dispatch({ type: 'UPDATE_RIGHT', result: guardedResult });
+          dispatch({
+            type: 'UPDATE_RIGHT',
+            result: guardedResult,
+            source: isHybrid ? hybridRouterRef.current.getSnapshot().source : 'ONNX_ACTIVE',
+          });
           if (guardedResult.emittedWord) {
             // Suppress hand-only output when a hand-face interaction is active.
             const suppressHandOnly = faceActiveRef.current;
@@ -569,8 +635,6 @@ export default function RecognizePage() {
     resetCustomPredictionState();
     rightBusyRef.current = false;
     rightLiveGestureRef.current = null;
-    onnxLiveGestureRef.current = null;
-    onnxLiveConfidenceRef.current = 0;
     dispatch({ type: 'RESET' });
   }, [stop, resetCustomPredictionState]);
 
@@ -579,8 +643,6 @@ export default function RecognizePage() {
     resetCustomPredictionState();
     rightBusyRef.current = false;
     rightLiveGestureRef.current = null;
-    onnxLiveGestureRef.current = null;
-    onnxLiveConfidenceRef.current = 0;
     dispatch({ type: 'RESET' });
   }, [resetCustomPredictionState]);
 
@@ -1106,9 +1168,13 @@ export default function RecognizePage() {
                   <p className="text-muted-foreground">Blank Rearm</p>
                   <p className="text-foreground">{pred.blankStableCount}/{pred.blankStableRequired}</p>
                 </div>
+                <div className="bg-muted/50 rounded px-2 py-1">
+                  <p className="text-muted-foreground">Source</p>
+                  <p className="text-foreground">{formatHybridSource(pred.hybridSource)}</p>
+                </div>
               </div>
               <div className="mt-1 text-[10px] font-mono text-muted-foreground">
-                live: {pred.liveGesture ?? 'blank'} · motion: {pred.motionEnergy.toFixed(4)}
+                live: {pred.liveGesture ?? 'blank'} · source: {formatHybridSource(pred.hybridSource)} · motion: {pred.motionEnergy.toFixed(4)}
               </div>
             </div>
           </div>
