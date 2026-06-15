@@ -65,6 +65,7 @@ const CUSTOM_SEGMENTATION_CONFIG = {
   confidenceThreshold: CUSTOM_ACTIVATE_CONFIDENCE / 100,
   confirmFrames: SEQUENCE_FRAMES + 4,
 };
+const CUSTOM_LABEL_SWITCH_FRAMES = 4;
 
 type RecognizerMode = 'onnx' | 'hybrid';
 
@@ -105,6 +106,10 @@ const DEFAULT_GESTURE_LABELS = new Set(DEFAULT_GESTURES.map(canonicalLabel));
 
 function isDefaultGestureLabel(label: string): boolean {
   return DEFAULT_GESTURE_LABELS.has(canonicalLabel(label));
+}
+
+function sameGestureLabel(a: string | null | undefined, b: string | null | undefined): boolean {
+  return Boolean(a && b && canonicalLabel(a) === canonicalLabel(b));
 }
 
 function getCustomGestureCandidate(result: ReturnType<typeof predictCustomModel>): {
@@ -365,6 +370,7 @@ export default function RecognizePage() {
   const rightLiveGestureRef = useRef<string | null>(null);
   const hybridRouterRef = useRef(new HybridRouter());
   const customFsmRef = useRef(new SegmentationFSM(CUSTOM_SEGMENTATION_CONFIG));
+  const pendingCustomSwitchRef = useRef<{ label: string | null; frames: number }>({ label: null, frames: 0 });
 
   // Stable refs so onLandmarks (empty deps) always reads current values
   // without needing to recreate the callback on every change.
@@ -396,6 +402,7 @@ export default function RecognizePage() {
   const resetCustomPredictionState = useCallback(() => {
     customFsmRef.current.reset();
     hybridRouterRef.current.reset();
+    pendingCustomSwitchRef.current = { label: null, frames: 0 };
   }, []);
 
   useEffect(() => {
@@ -485,11 +492,33 @@ export default function RecognizePage() {
 
     if (isHybrid) {
       const result = predictCustomModel(features);
-      const candidate = hybridRouterRef.current.getSnapshot().source === 'ONNX_ACTIVE'
+      const routerSnapshot = hybridRouterRef.current.getSnapshot();
+      const candidate = routerSnapshot.source === 'ONNX_ACTIVE'
         ? null
         : getCustomGestureCandidate(result);
       const liveLabel = candidate?.label ?? null;
       const confidence = candidate?.confidence ?? 0;
+      const isCustomLabelSwitch = routerSnapshot.source === 'CUSTOM_ACTIVE' &&
+        Boolean(liveLabel) &&
+        Boolean(routerSnapshot.activeLabel) &&
+        !sameGestureLabel(liveLabel, routerSnapshot.activeLabel);
+
+      if (isCustomLabelSwitch) {
+        const pending = pendingCustomSwitchRef.current;
+        if (sameGestureLabel(pending.label, liveLabel)) {
+          pending.frames += 1;
+        } else {
+          pending.label = liveLabel;
+          pending.frames = 1;
+        }
+        if (pending.frames >= CUSTOM_LABEL_SWITCH_FRAMES) {
+          customFsmRef.current.reset();
+          pendingCustomSwitchRef.current = { label: null, frames: 0 };
+        }
+      } else {
+        pendingCustomSwitchRef.current = { label: null, frames: 0 };
+      }
+
       const customStep = customFsmRef.current.step({
         predictedLabel: liveLabel,
         confidenceProb: confidence / 100,
@@ -500,7 +529,7 @@ export default function RecognizePage() {
 
       customFrame = {
         candidateLabel: liveLabel,
-        liveLabel: isCustomCoolingDown ? null : liveLabel,
+        liveLabel: isCustomCoolingDown && !isCustomLabelSwitch ? null : liveLabel,
         confidence,
         allScores: result?.allScores ?? [],
         fsmState: customStep.snapshot.state,

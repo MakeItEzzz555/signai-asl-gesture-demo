@@ -80,6 +80,17 @@ describe('HybridRouter', () => {
     expect(snapshot.releaseFrames).toBe(0);
   });
 
+  it('updates the active custom label while custom remains the source owner', () => {
+    const router = new HybridRouter();
+
+    router.step(frame({ customLabel: 'first custom', customConfidence: 99 }));
+    const snapshot = router.step(frame({ customLabel: 'second custom', customConfidence: 98 }));
+
+    expect(snapshot.source).toBe('CUSTOM_ACTIVE');
+    expect(snapshot.activeLabel).toBe('second custom');
+    expect(snapshot.activeConfidence).toBe(98);
+  });
+
   it('releases custom only after the configured invalid-frame window', () => {
     const router = new HybridRouter();
 
