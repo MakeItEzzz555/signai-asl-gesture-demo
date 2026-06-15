@@ -22,7 +22,7 @@ import {
   X,
   BookOpen,
 } from 'lucide-react';
-import { useApp } from '../contexts/AppContext';
+import { DEFAULT_GESTURES, useApp } from '../contexts/AppContext';
 import { useMediaPipe, type FaceRegion, type HandFaceInteraction } from '../hooks/useMediaPipe';
 import {
   DEFAULT_SEGMENTATION_CONFIG,
@@ -51,9 +51,15 @@ import { preWarmPiper, piperHasVoice } from '../utils/piperFallback';
 import GestureGuide from '../components/GestureGuide';
 import LanguageSelector from '../components/LanguageSelector';
 
-const CONFIDENCE_THRESHOLD = Math.round(DEFAULT_SEGMENTATION_CONFIG.confidenceThreshold * 100);
 const CONFIRMATION_FRAMES = DEFAULT_SEGMENTATION_CONFIG.confirmFrames;
 const BUFFER_FRAMES = SEQUENCE_FRAMES;
+const CUSTOM_CONFIDENCE_THRESHOLD = 95;
+const CUSTOM_MARGIN_THRESHOLD = 15;
+const CUSTOM_SEGMENTATION_CONFIG = {
+  ...DEFAULT_SEGMENTATION_CONFIG,
+  confidenceThreshold: CUSTOM_CONFIDENCE_THRESHOLD / 100,
+  confirmFrames: SEQUENCE_FRAMES + 4,
+};
 
 type RecognizerMode = 'onnx' | 'hybrid';
 
@@ -84,6 +90,36 @@ function getCombinedGestureLabel(gesture: string | null, faceRegion: FaceRegion)
   const normalized = (gesture ?? '').trim().toLowerCase();
   if (normalized && isFaceInteractiveLabel(normalized)) return normalized;
   return COMBINED_GESTURE_BY_REGION[faceRegion] ?? (gesture ?? 'Combined Gesture');
+}
+
+function canonicalLabel(label: string): string {
+  return label.trim().toLowerCase().replace(/[_-]+/g, ' ');
+}
+
+const DEFAULT_GESTURE_LABELS = new Set(DEFAULT_GESTURES.map(canonicalLabel));
+
+function isDefaultGestureLabel(label: string): boolean {
+  return DEFAULT_GESTURE_LABELS.has(canonicalLabel(label));
+}
+
+function getCustomGestureCandidate(result: ReturnType<typeof predictCustomModel>): {
+  label: string;
+  confidence: number;
+} | null {
+  if (!result || result.allScores.length === 0) return null;
+
+  const top = result.allScores[0];
+  const secondScore = result.allScores[1]?.score ?? 0;
+  const margin = top.score - secondScore;
+
+  if (isDefaultGestureLabel(top.label)) return null;
+  if (top.score < CUSTOM_CONFIDENCE_THRESHOLD) return null;
+  if (margin < CUSTOM_MARGIN_THRESHOLD) return null;
+
+  return {
+    label: top.label,
+    confidence: top.score,
+  };
 }
 
 const FACE_REGION_GUARD: Record<string, FaceRegion[]> = {
@@ -218,8 +254,19 @@ function predictionReducer(state: PredictionState, action: PredictionAction): Pr
       return applyRightUpdate(state, action.result);
 
     case 'UPDATE_CUSTOM': {
+      const displayGesture = action.result.emittedWord
+        ?? action.result.liveLabel
+        ?? state.currentGesture;
+      const displayConfidence = action.result.emittedWord || action.result.liveLabel
+        ? action.result.liveConfidence
+        : state.currentConfidence;
+      const isConfirmed = action.result.emittedWord
+        ? true
+        : state.isConfirmed && (!action.result.liveLabel || action.result.liveLabel === state.currentGesture);
       const next: PredictionState = {
         ...state,
+        currentGesture: displayGesture,
+        currentConfidence: displayConfidence,
         liveGesture: action.result.liveLabel,
         liveConfidence: action.result.liveConfidence,
         fsmState: action.result.fsmState,
@@ -230,7 +277,7 @@ function predictionReducer(state: PredictionState, action: PredictionAction): Pr
         bufferSize: action.result.liveLabel ? 1 : 0,
         motionEnergy: 0,
         topPredictions: action.result.allScores.filter(s => s.label !== 'blank').slice(0, 3),
-        isConfirmed: Boolean(action.result.emittedWord),
+        isConfirmed,
       };
       if (!action.result.emittedWord) return next;
       return {
@@ -287,7 +334,10 @@ export default function RecognizePage() {
   const recognizerModeRef = useRef<RecognizerMode>('onnx');
   const rightBusyRef = useRef(false);
   const rightLiveGestureRef = useRef<string | null>(null);
-  const customFsmRef = useRef(new SegmentationFSM(DEFAULT_SEGMENTATION_CONFIG));
+  const onnxLiveGestureRef = useRef<string | null>(null);
+  const onnxLiveConfidenceRef = useRef(0);
+  const customDisplayActiveRef = useRef(false);
+  const customFsmRef = useRef(new SegmentationFSM(CUSTOM_SEGMENTATION_CONFIG));
 
   // Stable refs so onLandmarks (empty deps) always reads current values
   // without needing to recreate the callback on every change.
@@ -318,6 +368,7 @@ export default function RecognizePage() {
 
   const resetCustomPredictionState = useCallback(() => {
     customFsmRef.current.reset();
+    customDisplayActiveRef.current = false;
   }, []);
 
   useEffect(() => {
@@ -405,8 +456,10 @@ export default function RecognizePage() {
     if (recognizerModeRef.current === 'hybrid' && isCustomModelReady()) {
 
       const result = predictCustomModel(features);
-      const liveLabel = result && result.confidence >= CONFIDENCE_THRESHOLD ? result.label : null;
-      const confidence = result?.confidence ?? 0;
+      const candidate = getCustomGestureCandidate(result);
+      const onnxDefaultActive = onnxLiveGestureRef.current !== null && onnxLiveConfidenceRef.current >= 80;
+      const liveLabel = !onnxDefaultActive ? candidate?.label ?? null : null;
+      const confidence = !onnxDefaultActive ? candidate?.confidence ?? 0 : 0;
       const customStep = customFsmRef.current.step({
         predictedLabel: liveLabel,
         confidenceProb: confidence / 100,
@@ -416,6 +469,11 @@ export default function RecognizePage() {
       const isCustomCoolingDown = customStep.snapshot.state === 'COOLDOWN';
       const emittedHandOnlyWord = faceActiveRef.current ? null : customStep.emittedWord;
       const displayLiveLabel = isCustomCoolingDown ? null : liveLabel;
+      customDisplayActiveRef.current = customDisplayActiveRef.current || Boolean(
+        displayLiveLabel ||
+        emittedHandOnlyWord ||
+        customStep.snapshot.state !== 'IDLE'
+      );
 
       rightLiveGestureRef.current = displayLiveLabel;
       dispatch({
@@ -446,7 +504,6 @@ export default function RecognizePage() {
           );
         }
       }
-      if (liveLabel) return;
     }
 
     if (!isOnnxModelReady()) return;
@@ -458,7 +515,19 @@ export default function RecognizePage() {
         .then((result) => {
           if (!result) return;
           const mappedResult: SequencePrediction = result;
-          rightLiveGestureRef.current = mappedResult.liveLabel === 'blank' ? null : mappedResult.liveLabel;
+          const onnxLiveLabel = mappedResult.liveLabel === 'blank' ? null : mappedResult.liveLabel;
+          const onnxHasLiveDefault = Boolean(onnxLiveLabel && mappedResult.liveConfidence >= 80);
+          onnxLiveGestureRef.current = onnxHasLiveDefault ? onnxLiveLabel : null;
+          onnxLiveConfidenceRef.current = onnxHasLiveDefault ? mappedResult.liveConfidence : 0;
+          if (onnxHasLiveDefault) customDisplayActiveRef.current = false;
+          rightLiveGestureRef.current = onnxLiveLabel;
+          if (
+            recognizerModeRef.current === 'hybrid' &&
+            customDisplayActiveRef.current &&
+            !onnxHasLiveDefault
+          ) {
+            return;
+          }
           const allowed = mappedResult.emittedWord
             ? shouldEmitGesture(mappedResult.emittedWord, interaction)
             : true;
@@ -500,6 +569,8 @@ export default function RecognizePage() {
     resetCustomPredictionState();
     rightBusyRef.current = false;
     rightLiveGestureRef.current = null;
+    onnxLiveGestureRef.current = null;
+    onnxLiveConfidenceRef.current = 0;
     dispatch({ type: 'RESET' });
   }, [stop, resetCustomPredictionState]);
 
@@ -508,6 +579,8 @@ export default function RecognizePage() {
     resetCustomPredictionState();
     rightBusyRef.current = false;
     rightLiveGestureRef.current = null;
+    onnxLiveGestureRef.current = null;
+    onnxLiveConfidenceRef.current = 0;
     dispatch({ type: 'RESET' });
   }, [resetCustomPredictionState]);
 
