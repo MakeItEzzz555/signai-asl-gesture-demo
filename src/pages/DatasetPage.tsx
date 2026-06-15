@@ -44,6 +44,7 @@ export default function DatasetPage() {
   const [selectedGesture, setSelectedGesture] = useState(TRAINABLE_DEFAULT_GESTURES[0] ?? DEFAULT_GESTURES[0]);
   const [customGesture, setCustomGesture] = useState('');
   const [customGestureTranslation, setCustomGestureTranslation] = useState('');
+  const [customGestureLabels, setCustomGestureLabels] = useState<string[]>([]);
   const [selectedTranslation, setSelectedTranslation] = useState('');
   const [isRecording, setIsRecording] = useState(false);
   const [captureCount, setCaptureCount] = useState(0);
@@ -76,8 +77,9 @@ export default function DatasetPage() {
   // All available gestures (default + any custom ones in dataset)
   const allGestures = useMemo(() => Array.from(new Set([
     ...TRAINABLE_DEFAULT_GESTURES,
+    ...customGestureLabels,
     ...dataset.labels.filter(l => !DEFAULT_GESTURES.includes(l) && !isFaceInteractiveGesture(l)),
-  ])), [dataset.labels]);
+  ])), [customGestureLabels, dataset.labels]);
 
   const startRecording = useCallback(() => {
     if (!camState.isActive) {
@@ -157,6 +159,7 @@ export default function DatasetPage() {
         toast.success(`Added ${describeSamples(samples)}${parsed.convertedToHandOnlyCount > 0 ? `; converted ${parsed.convertedToHandOnlyCount} old samples to hand-only` : ''}${skippedFaceSamples > 0 ? `; skipped ${skippedFaceSamples} face-touch samples` : ''}`);
       } else {
         importDataset(samples);
+        setCustomGestureLabels([]);
         mergeCustomTranslations(parsed.customTranslations);
         toast.success(`Imported ${describeSamples(samples)}${parsed.convertedToHandOnlyCount > 0 ? `; converted ${parsed.convertedToHandOnlyCount} old samples to hand-only` : ''}${skippedFaceSamples > 0 ? `; skipped ${skippedFaceSamples} face-touch samples` : ''}`);
       }
@@ -180,6 +183,7 @@ export default function DatasetPage() {
   const handleClear = () => {
     if (confirm('Clear all dataset samples? This cannot be undone.')) {
       clearDataset();
+      setCustomGestureLabels([]);
       toast.info('Dataset cleared');
     }
   };
@@ -198,6 +202,7 @@ export default function DatasetPage() {
     if (customGestureTranslation.trim()) {
       setCustomTranslation(name, currentLanguage, customGestureTranslation);
     }
+    setCustomGestureLabels(prev => prev.includes(name) ? prev : [...prev, name]);
     setSelectedGesture(name);
     setCustomGesture('');
     setCustomGestureTranslation('');
@@ -474,6 +479,7 @@ export default function DatasetPage() {
                             onClick={() => {
                               if (confirm(`Delete all samples for "${label}"?`)) {
                                 removeLabel(label);
+                                setCustomGestureLabels(prev => prev.filter(customLabel => customLabel !== label));
                                 toast.info(`Removed "${label}" from dataset`);
                               }
                             }}
