@@ -11,6 +11,7 @@
 
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
 import { type LanguageCode, LANGUAGES } from '../i18n/translations';
+import { disposeModel } from '../ml/model';
 import { setCloudVoicesEnabled } from '../utils/tts';
 
 export type TextSize = 'normal' | 'large' | 'xl';
@@ -77,6 +78,7 @@ interface AppContextType {
   removeLabel: (label: string) => void;
   clearDataset: () => void;
   importDataset: (samples: GestureSample[]) => void;
+  mergeDataset: (samples: GestureSample[]) => void;
 
   trainingConfig: TrainingConfig;
   setTrainingConfig: (partial: Partial<TrainingConfig>) => void;
@@ -113,6 +115,10 @@ const DEFAULT_TRAINING_CONFIG: TrainingConfig = {
   validationSplit: 0.2,
 };
 
+function labelsFromSamples(samples: GestureSample[]): string[] {
+  return Array.from(new Set(samples.map(s => s.label)));
+}
+
 export function AppProvider({ children }: { children: React.ReactNode }) {
   const [accessibility, setAccessibilityState] = useState<Accessibility>(DEFAULT_ACCESSIBILITY);
 
@@ -138,6 +144,13 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setTrainingConfigState(prev => ({ ...prev, ...partial }));
   }, []);
 
+  const resetTrainingState = useCallback(() => {
+    disposeModel();
+    setTrainingLogs([]);
+    setIsModelTrained(false);
+    setEvaluationMetrics(null);
+  }, []);
+
   const addSample = useCallback((sample: GestureSample) => {
     setDataset(prev => {
       const labels = prev.labels.includes(sample.label)
@@ -148,29 +161,38 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
         samples: [...prev.samples, sample],
       };
     });
-  }, []);
+    resetTrainingState();
+  }, [resetTrainingState]);
 
   const removeLabel = useCallback((label: string) => {
     setDataset(prev => ({
       labels: prev.labels.filter(l => l !== label),
       samples: prev.samples.filter(s => s.label !== label),
     }));
-  }, []);
+    resetTrainingState();
+  }, [resetTrainingState]);
 
   const clearDataset = useCallback(() => {
     setDataset({ samples: [], labels: [] });
-    setTrainingLogs([]);
-    setIsModelTrained(false);
-    setEvaluationMetrics(null);
-  }, []);
+    resetTrainingState();
+  }, [resetTrainingState]);
 
   const importDataset = useCallback((samples: GestureSample[]) => {
-    const labels = Array.from(new Set(samples.map(s => s.label)));
+    const labels = labelsFromSamples(samples);
     setDataset({ samples, labels });
-    setTrainingLogs([]);
-    setIsModelTrained(false);
-    setEvaluationMetrics(null);
-  }, []);
+    resetTrainingState();
+  }, [resetTrainingState]);
+
+  const mergeDataset = useCallback((samples: GestureSample[]) => {
+    setDataset(prev => {
+      const mergedSamples = [...prev.samples, ...samples];
+      return {
+        samples: mergedSamples,
+        labels: labelsFromSamples(mergedSamples),
+      };
+    });
+    resetTrainingState();
+  }, [resetTrainingState]);
 
   // Restore accessibility settings from localStorage on first mount.
   useEffect(() => {
@@ -220,6 +242,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     removeLabel,
     clearDataset,
     importDataset,
+    mergeDataset,
 
     trainingConfig,
     setTrainingConfig,
@@ -244,6 +267,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     removeLabel,
     clearDataset,
     importDataset,
+    mergeDataset,
     trainingConfig,
     setTrainingConfig,
     trainingLogs,

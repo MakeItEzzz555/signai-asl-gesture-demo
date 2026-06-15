@@ -27,13 +27,18 @@ import { useMediaPipe, type FaceRegion, type HandFaceInteraction } from '../hook
 import {
   DEFAULT_SEGMENTATION_CONFIG,
   SEQUENCE_FRAMES,
-  predict,
+  predict as predictOnnx,
   isFaceInteractiveLabel,
-  isModelReady,
-  resetPredictionState,
+  isModelReady as isOnnxModelReady,
+  resetPredictionState as resetOnnxPredictionState,
   type SegmentationState,
   type SequencePrediction,
 } from '../ml/inferenceModel';
+import {
+  predict as predictCustomModel,
+  isModelReady as isCustomModelReady,
+  loadModel as loadCustomModel,
+} from '../ml/model';
 import {
   type Landmark,
 } from '../utils/landmarks';
@@ -48,6 +53,9 @@ import LanguageSelector from '../components/LanguageSelector';
 const CONFIDENCE_THRESHOLD = Math.round(DEFAULT_SEGMENTATION_CONFIG.confidenceThreshold * 100);
 const CONFIRMATION_FRAMES = DEFAULT_SEGMENTATION_CONFIG.confirmFrames;
 const BUFFER_FRAMES = SEQUENCE_FRAMES;
+const CUSTOM_EMIT_COOLDOWN_FRAMES = 24;
+
+type RecognizerMode = 'onnx' | 'custom';
 
 // Number of frames to hold the "face interaction active" flag after the last
 // detected interaction.  Prevents a single missed detection frame from briefly
@@ -156,6 +164,17 @@ const INITIAL_PRED_STATE: PredictionState = {
 
 type PredictionAction =
   | { type: 'UPDATE_RIGHT'; result: SequencePrediction }
+  | {
+      type: 'UPDATE_CUSTOM';
+      result: {
+        liveLabel: string | null;
+        liveConfidence: number;
+        allScores: { label: string; score: number }[];
+        stableCount: number;
+        cooldownFrames: number;
+        emittedWord: string | null;
+      };
+    }
   | { type: 'CONFIRM_PENDING' }
   | { type: 'DISCARD_PENDING' }
   | { type: 'RESET' };
@@ -195,6 +214,32 @@ function predictionReducer(state: PredictionState, action: PredictionAction): Pr
     case 'UPDATE_RIGHT':
       return applyRightUpdate(state, action.result);
 
+    case 'UPDATE_CUSTOM': {
+      const next: PredictionState = {
+        ...state,
+        liveGesture: action.result.liveLabel,
+        liveConfidence: action.result.liveConfidence,
+        fsmState: action.result.liveLabel ? 'GESTURE_ACTIVE' : 'IDLE',
+        stableCount: action.result.stableCount,
+        cooldownFrames: action.result.cooldownFrames,
+        blankStableCount: 0,
+        blankStableRequired: 0,
+        bufferSize: action.result.liveLabel ? 1 : 0,
+        motionEnergy: 0,
+        topPredictions: action.result.allScores.filter(s => s.label !== 'blank').slice(0, 3),
+        isConfirmed: Boolean(action.result.emittedWord),
+      };
+      if (!action.result.emittedWord) return next;
+      return {
+        ...next,
+        currentGesture: action.result.emittedWord,
+        currentConfidence: action.result.liveConfidence,
+        pendingWord: action.result.emittedWord,
+        pendingConfidence: action.result.liveConfidence,
+        isConfirmed: true,
+      };
+    }
+
     case 'CONFIRM_PENDING':
       return { ...state, pendingWord: null, pendingConfidence: 0 };
 
@@ -219,13 +264,21 @@ function predictionReducer(state: PredictionState, action: PredictionAction): Pr
 // ---------------------------------------------------------------------------
 
 export default function RecognizePage() {
-  const { accessibility, setAccessibility, modelReady, modelLoading, modelError } = useApp();
+  const { accessibility, setAccessibility, modelReady, modelLoading, modelError, isModelTrained } = useApp();
   const language = accessibility.language;
   const [pred, dispatch] = useReducer(predictionReducer, INITIAL_PRED_STATE);
   const [recognizedWords, setRecognizedWords] = useState<RecognizedWord[]>([]);
   const [guideOpen, setGuideOpen] = useState(false);
+  const [recognizerMode, setRecognizerMode] = useState<RecognizerMode>('onnx');
+  const [customModelReady, setCustomModelReady] = useState(isCustomModelReady());
+  const [customModelLoading, setCustomModelLoading] = useState(false);
+  const [customModelNotice, setCustomModelNotice] = useState<string | null>(null);
+  const recognizerModeRef = useRef<RecognizerMode>('onnx');
   const rightBusyRef = useRef(false);
   const rightLiveGestureRef = useRef<string | null>(null);
+  const customLastLabelRef = useRef<string | null>(null);
+  const customStableCountRef = useRef(0);
+  const customCooldownRef = useRef(0);
 
   // Stable refs so onLandmarks (empty deps) always reads current values
   // without needing to recreate the callback on every change.
@@ -253,11 +306,25 @@ export default function RecognizePage() {
   const emittedFaceRegionRef = useRef<FaceRegion | null>(null);
   const faceHoldRef          = useRef(0);
 
+  const resetCustomPredictionState = useCallback(() => {
+    customLastLabelRef.current = null;
+    customStableCountRef.current = 0;
+    customCooldownRef.current = 0;
+  }, []);
+
   useEffect(() => {
     autoSpeakRef.current = accessibility.autoSpeak;
     audioEnabledRef.current = accessibility.audioEnabled;
     languageRef.current = accessibility.language;
   }, [accessibility.autoSpeak, accessibility.audioEnabled, accessibility.language]);
+
+  useEffect(() => {
+    recognizerModeRef.current = recognizerMode;
+  }, [recognizerMode]);
+
+  useEffect(() => {
+    setCustomModelReady(isCustomModelReady());
+  }, [isModelTrained]);
 
   useEffect(() => { preWarmVoices(); }, []);
 
@@ -319,12 +386,63 @@ export default function RecognizePage() {
       }
     }
 
-    if (!isModelReady()) return;
+    if (recognizerModeRef.current === 'custom') {
+      if (!isCustomModelReady()) return;
+
+      const result = predictCustomModel(features);
+      const liveLabel = result && result.confidence >= CONFIDENCE_THRESHOLD ? result.label : null;
+      if (customCooldownRef.current > 0) customCooldownRef.current--;
+
+      if (liveLabel && liveLabel === customLastLabelRef.current) {
+        customStableCountRef.current = Math.min(CONFIRMATION_FRAMES, customStableCountRef.current + 1);
+      } else {
+        customLastLabelRef.current = liveLabel;
+        customStableCountRef.current = liveLabel ? 1 : 0;
+      }
+
+      let emittedWord: string | null = null;
+      if (
+        liveLabel &&
+        customStableCountRef.current >= CONFIRMATION_FRAMES &&
+        customCooldownRef.current === 0
+      ) {
+        emittedWord = liveLabel;
+        customCooldownRef.current = CUSTOM_EMIT_COOLDOWN_FRAMES;
+      }
+
+      const emittedHandOnlyWord = faceActiveRef.current ? null : emittedWord;
+      rightLiveGestureRef.current = liveLabel;
+      dispatch({
+        type: 'UPDATE_CUSTOM',
+        result: {
+          liveLabel,
+          liveConfidence: result?.confidence ?? 0,
+          allScores: result?.allScores ?? [],
+          stableCount: customStableCountRef.current,
+          cooldownFrames: customCooldownRef.current,
+          emittedWord: emittedHandOnlyWord,
+        },
+      });
+
+      if (emittedHandOnlyWord) {
+        const confidence = result?.confidence ?? 0;
+        setRecognizedWordsRef.current(prev => [
+          { word: emittedHandOnlyWord, confidence, timestamp: Date.now() },
+          ...prev.slice(0, 49),
+        ]);
+        if (autoSpeakRef.current && audioEnabledRef.current) {
+          speak(translateGesture(emittedHandOnlyWord, languageRef.current), LANGUAGE_BCP47[languageRef.current] ?? 'en-US', onMissingVoiceRef.current);
+        }
+      }
+      return;
+    }
+
+    if (!isOnnxModelReady()) return;
 
     // Primary-hand ONNX pipeline.
     if (!rightBusyRef.current) {
       rightBusyRef.current = true;
-      void predict(features, handPresent, isHeld)
+      void predictOnnx(features, handPresent, isHeld)
         .then((result) => {
           if (!result) return;
           const mappedResult: SequencePrediction = result;
@@ -362,11 +480,51 @@ export default function RecognizePage() {
 
   const handleStop = useCallback(() => {
     stop();
-    resetPredictionState();
+    resetOnnxPredictionState();
+    resetCustomPredictionState();
     rightBusyRef.current = false;
     rightLiveGestureRef.current = null;
     dispatch({ type: 'RESET' });
-  }, [stop]);
+  }, [stop, resetCustomPredictionState]);
+
+  const resetRecognitionDisplay = useCallback(() => {
+    resetOnnxPredictionState();
+    resetCustomPredictionState();
+    rightBusyRef.current = false;
+    rightLiveGestureRef.current = null;
+    dispatch({ type: 'RESET' });
+  }, [resetCustomPredictionState]);
+
+  const handleRecognizerModeChange = useCallback(async (mode: RecognizerMode) => {
+    if (mode === recognizerMode) return;
+
+    if (mode === 'custom') {
+      setCustomModelNotice(null);
+      if (!isCustomModelReady()) {
+        setCustomModelLoading(true);
+        const loaded = await loadCustomModel();
+        setCustomModelLoading(false);
+        setCustomModelReady(loaded);
+        if (!loaded) {
+          const message = 'Train or load a custom model first.';
+          setCustomModelNotice(message);
+          toast.error(message);
+          setRecognizerMode('onnx');
+          recognizerModeRef.current = 'onnx';
+          resetRecognitionDisplay();
+          return;
+        }
+      } else {
+        setCustomModelReady(true);
+      }
+    } else {
+      setCustomModelNotice(null);
+    }
+
+    setRecognizerMode(mode);
+    recognizerModeRef.current = mode;
+    resetRecognitionDisplay();
+  }, [recognizerMode, resetRecognitionDisplay]);
 
   /** Dismiss the right-hand pending notification (word already auto-appended). */
   const handleConfirmPending = useCallback(() => {
@@ -385,9 +543,10 @@ export default function RecognizePage() {
   useEffect(() => {
     return () => {
       stop();
-      resetPredictionState();
+      resetOnnxPredictionState();
+      resetCustomPredictionState();
     };
-  }, [stop]);
+  }, [stop, resetCustomPredictionState]);
 
   const confidenceColor = pred.currentConfidence >= 90
     ? 'text-success'
@@ -438,8 +597,13 @@ export default function RecognizePage() {
                   Camera Feed
                 </span>
                 {/* Model source badge */}
-                <span className="ml-1 px-2 py-0.5 rounded text-[10px] font-mono font-semibold bg-primary/10 text-primary border border-primary/20">
-                  ONNX Dynamic
+                <span className={cn(
+                  'ml-1 px-2 py-0.5 rounded text-[10px] font-mono font-semibold border',
+                  recognizerMode === 'custom'
+                    ? 'bg-yellow-500/10 text-yellow-400 border-yellow-500/30'
+                    : 'bg-primary/10 text-primary border-primary/20',
+                )}>
+                  {recognizerMode === 'custom' ? 'Custom TF.js' : 'ONNX Dynamic'}
                 </span>
               </div>
               <div className="flex items-center gap-3 font-mono text-xs text-muted-foreground">
@@ -554,10 +718,14 @@ export default function RecognizePage() {
               {!camState.isActive ? (
                 <button
                   onClick={start}
-                  disabled={camState.isLoading || modelLoading}
+                  disabled={
+                    camState.isLoading ||
+                    (recognizerMode === 'onnx' && modelLoading) ||
+                    (recognizerMode === 'custom' && customModelLoading)
+                  }
                   className="flex items-center gap-2 px-4 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:opacity-90 transition-opacity disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  {modelLoading ? (
+                  {(recognizerMode === 'onnx' && modelLoading) || (recognizerMode === 'custom' && customModelLoading) ? (
                     <>
                       <Loader className="w-4 h-4 animate-spin" />
                       Loading Model...
@@ -587,6 +755,32 @@ export default function RecognizePage() {
                 Gesture Guide
               </button>
 
+              <div className="flex items-center gap-1 rounded-lg bg-muted border border-border p-1">
+                <button
+                  onClick={() => void handleRecognizerModeChange('onnx')}
+                  className={cn(
+                    'px-3 py-1.5 rounded-md text-xs font-mono font-semibold transition-colors',
+                    recognizerMode === 'onnx'
+                      ? 'bg-primary/20 text-primary'
+                      : 'text-muted-foreground hover:text-foreground',
+                  )}
+                >
+                  ONNX
+                </button>
+                <button
+                  onClick={() => void handleRecognizerModeChange('custom')}
+                  disabled={customModelLoading}
+                  className={cn(
+                    'px-3 py-1.5 rounded-md text-xs font-mono font-semibold transition-colors disabled:opacity-50',
+                    recognizerMode === 'custom'
+                      ? 'bg-yellow-500/20 text-yellow-400'
+                      : 'text-muted-foreground hover:text-foreground',
+                  )}
+                >
+                  {customModelLoading ? 'Loading...' : 'Custom'}
+                </button>
+              </div>
+
               <button
                 onClick={() => setAccessibility({ autoSpeak: !accessibility.autoSpeak })}
                 className={cn(
@@ -600,10 +794,20 @@ export default function RecognizePage() {
                 Auto-Speak {accessibility.autoSpeak ? 'ON' : 'OFF'}
               </button>
 
-              {!modelReady && !modelLoading && (
+              {recognizerMode === 'onnx' && !modelReady && !modelLoading && (
                 <p className="text-xs text-warning">
                   Camera can run, but predictions start only when the model is loaded.
                 </p>
+              )}
+
+              {recognizerMode === 'custom' && !customModelReady && !customModelLoading && (
+                <p className="text-xs text-warning">
+                  Train or load a custom model first.
+                </p>
+              )}
+
+              {customModelNotice && recognizerMode === 'onnx' && (
+                <p className="text-xs text-warning">{customModelNotice}</p>
               )}
 
               <button

@@ -10,7 +10,7 @@ SignAI combines MediaPipe hand/face landmarks, ONNX Runtime Web, and a small det
 - **One-hand recognition:** ONNX sequence model for `hello`, `yes`, `no`, `please`, and `help`.
 - **Face-region interactions:** deterministic index/middle fingertip proximity for mouth, eye, nose, forehead, and ear labels.
 - **Speech output:** confirmed words can be spoken through the Web Speech API.
-- **Custom training workflow:** collaborators can record samples, train a TensorFlow.js model, and inspect metrics in the app.
+- **Custom training workflow:** collaborators can merge datasets, train a TensorFlow.js model, inspect metrics, and optionally use it in Recognize.
 - **Hackathon-ready scope:** second-hand recognition and broad gesture expansion are intentionally deferred until stronger data exists.
 
 ## Demo Flow
@@ -22,6 +22,16 @@ Webcam
   -> ONNX Runtime Web
   -> segmentation FSM
   -> confirmed word + optional speech
+```
+
+Custom mode is optional:
+
+```text
+Dataset / starter samples
+  -> TensorFlow.js training
+  -> browser-local custom model
+  -> Recognize custom mode toggle
+  -> stable custom word + optional speech
 ```
 
 Face-region labels are handled separately:
@@ -74,9 +84,9 @@ Open the Vite URL, grant camera permission, and use **Recognize**.
 ## App Sections
 
 - **Home:** overview and entry points.
-- **Recognize:** live ASL demo with camera, sentence output, and speech.
-- **Dataset:** record browser-local gesture samples.
-- **Train:** train a custom TensorFlow.js model from recorded samples.
+- **Recognize:** live ASL demo with camera, sentence output, speech, and an optional custom TensorFlow.js mode.
+- **Dataset:** record browser-local gesture samples, load starter data, import/replace datasets, or add JSON samples to the current dataset.
+- **Train:** train or load a custom TensorFlow.js model from the current merged dataset.
 - **Evaluate:** inspect custom model metrics.
 - **Settings:** theme, text size, contrast, and speech preferences.
 - **About:** technical project summary.
@@ -114,6 +124,7 @@ Large raw datasets and offline training artifacts are intentionally ignored by G
 ```text
 src/
   hooks/useMediaPipe.ts       MediaPipe Hands + FaceMesh runtime
+  dataset/datasetUtils.ts     dataset import/export, tensor prep, starter data
   ml/inferenceModel.ts        ONNX model loading and sequence inference
   ml/segmentationFSM.ts       gesture confirmation/cooldown state machine
   ml/model.ts                 browser-local TensorFlow.js training model
@@ -159,9 +170,15 @@ Then host `dist/` on any static host. The app loads MediaPipe and ONNX WASM asse
 
 The app does not send webcam frames to a server. MediaPipe, ONNX inference, custom sample recording, and TensorFlow.js training all run in the browser.
 
+## Custom Dataset Notes
+
+The repository ships the active ONNX model, not the raw training dataset used to build it. The **Load Starter Dataset** button generates synthetic browser-local samples for the default demo gestures so collaborators can train quickly, then add their own recorded or imported samples on top.
+
+Use **Add Dataset to Current** to append JSON samples without losing existing data. Use **Import Dataset (Replace)** when you intentionally want to clear the current in-browser dataset and load a different one.
+
 ## Post-Hackathon Roadmap
 
 - Revisit second-hand recognition with dedicated bimanual training data.
 - Promote face-interactive signs from heuristic labels to trained classes only after collecting balanced samples.
-- Decide whether the TensorFlow.js custom training workflow should become a live recognition mode.
+- Improve custom TensorFlow.js live recognition with stronger sample guidance and model quality checks.
 - Add deployment-specific config if the app is published under a subpath such as GitHub Pages.

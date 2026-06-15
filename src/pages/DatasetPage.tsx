@@ -11,7 +11,7 @@ import { useState, useRef, useCallback, useEffect } from 'react';
 import { Camera, Download, Upload, Trash2, Plus, CheckCircle, AlertCircle, StopCircle } from 'lucide-react';
 import { useApp, DEFAULT_GESTURES } from '../contexts/AppContext';
 import { useMediaPipe } from '../hooks/useMediaPipe';
-import { downloadDataset, parseImportedDataset, getSampleCounts } from '../dataset/datasetUtils';
+import { downloadDataset, parseImportedDataset, getSampleCounts, generateDemoDataset } from '../dataset/datasetUtils';
 import type { Landmark } from '../utils/landmarks';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
@@ -20,7 +20,7 @@ const MIN_SAMPLES_PER_CLASS = 20;
 const CAPTURE_INTERVAL_MS = 200; // Capture one sample every 200ms when recording
 
 export default function DatasetPage() {
-  const { dataset, addSample, removeLabel, clearDataset, importDataset } = useApp();
+  const { dataset, addSample, removeLabel, clearDataset, importDataset, mergeDataset } = useApp();
   const [selectedGesture, setSelectedGesture] = useState(DEFAULT_GESTURES[0]);
   const [customGesture, setCustomGesture] = useState('');
   const [isRecording, setIsRecording] = useState(false);
@@ -29,6 +29,7 @@ export default function DatasetPage() {
   const captureIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const latestFeaturesRef = useRef<number[] | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const importModeRef = useRef<'replace' | 'merge'>('replace');
 
   const onLandmarks = useCallback((features: number[], _raw: Landmark[] | null, handPresent: boolean, _isHeld: boolean, _rawLeft?: Landmark[] | null, _face?: Landmark[] | null) => {
     // Store features whenever ANY hand is present (right or left)
@@ -97,19 +98,44 @@ export default function DatasetPage() {
     toast.success(`Exported ${dataset.samples.length} samples`);
   };
 
+  const describeSamples = (samples: { label: string }[]) => {
+    const classCount = new Set(samples.map(sample => sample.label)).size;
+    return `${samples.length} samples across ${classCount} ${classCount === 1 ? 'class' : 'classes'}`;
+  };
+
+  const openImport = (mode: 'replace' | 'merge') => {
+    importModeRef.current = mode;
+    fileInputRef.current?.click();
+  };
+
   const handleImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
     try {
       const text = await file.text();
       const samples = parseImportedDataset(text);
-      importDataset(samples);
-      toast.success(`Imported ${samples.length} samples`);
+      if (importModeRef.current === 'merge') {
+        mergeDataset(samples);
+        toast.success(`Added ${describeSamples(samples)}`);
+      } else {
+        importDataset(samples);
+        toast.success(`Imported ${describeSamples(samples)}`);
+      }
     } catch (err) {
       toast.error(`Import failed: ${err instanceof Error ? err.message : 'Invalid file'}`);
     }
     // Reset file input
     if (fileInputRef.current) fileInputRef.current.value = '';
+  };
+
+  const handleLoadStarterDataset = () => {
+    const samples = generateDemoDataset(DEFAULT_GESTURES, 30);
+    if (samples.length === 0) {
+      toast.error('Starter dataset could not be generated');
+      return;
+    }
+    mergeDataset(samples);
+    toast.success(`Added ${describeSamples(samples)}`);
   };
 
   const handleClear = () => {
@@ -408,11 +434,25 @@ export default function DatasetPage() {
               Export Dataset (JSON)
             </button>
             <button
-              onClick={() => fileInputRef.current?.click()}
+              onClick={handleLoadStarterDataset}
+              className="w-full flex items-center gap-2 px-4 py-2.5 rounded-lg bg-primary/10 text-primary border border-primary/20 text-sm font-medium hover:bg-primary/20 transition-colors"
+            >
+              <Plus className="w-4 h-4" />
+              Load Starter Dataset
+            </button>
+            <button
+              onClick={() => openImport('merge')}
               className="w-full flex items-center gap-2 px-4 py-2.5 rounded-lg bg-muted text-foreground border border-border text-sm font-medium hover:bg-accent transition-colors"
             >
               <Upload className="w-4 h-4" />
-              Import Dataset (JSON)
+              Add Dataset to Current
+            </button>
+            <button
+              onClick={() => openImport('replace')}
+              className="w-full flex items-center gap-2 px-4 py-2.5 rounded-lg bg-muted text-foreground border border-border text-sm font-medium hover:bg-accent transition-colors"
+            >
+              <Upload className="w-4 h-4" />
+              Import Dataset (Replace)
             </button>
             <input
               ref={fileInputRef}
@@ -441,6 +481,8 @@ export default function DatasetPage() {
               <li>• Ensure good lighting on your hand</li>
               <li>• Keep background uncluttered</li>
               <li>• Hold gesture steady during capture</li>
+              <li>• Load the starter dataset before adding custom gesture samples</li>
+              <li>• Add Dataset to Current appends JSON samples without replacing existing data</li>
               <li>• Demo training is scoped to one-hand core gestures</li>
               <li>• Face-touch interactions are handled by the live heuristic, not custom training</li>
             </ul>
