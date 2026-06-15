@@ -10,7 +10,7 @@
  *
  */
 
-import * as ort from 'onnxruntime-web';
+import * as ort from 'onnxruntime-web/wasm';
 import {
   DEFAULT_SEGMENTATION_CONFIG,
   SegmentationFSM,
@@ -132,8 +132,12 @@ const rightPipeline = createPipeline();
 // ── Utility functions ────────────────────────────────────────────────────────
 function configureOrt() {
   if (ortConfigured) return;
+  ort.env.wasm.proxy = false;
   ort.env.wasm.numThreads = 1;
-  ort.env.wasm.wasmPaths = 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.24.2/dist/';
+  ort.env.wasm.wasmPaths = {
+    'ort-wasm-simd.wasm': 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.18.0/dist/ort-wasm-simd.wasm',
+    'ort-wasm.wasm': 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.18.0/dist/ort-wasm.wasm',
+  };
   ortConfigured = true;
 }
 
@@ -251,23 +255,8 @@ function validateSessionSignature(loadedSession: ort.InferenceSession, loadedLab
   if (loadedSession.inputNames.length === 0 || loadedSession.outputNames.length === 0) {
     throw new Error('ONNX session is missing input/output names');
   }
-  const inputMeta = loadedSession.inputMetadata[0];
-  if (!inputMeta?.isTensor) throw new Error('ONNX input must be a tensor');
-  const inputShape = inputMeta.shape;
-  if (inputShape.length !== 3) throw new Error(`Expected ONNX input rank 3, received ${inputShape.length}`);
-  if (typeof inputShape[1] === 'number' && inputShape[1] !== SEQ_LEN) {
-    throw new Error(`Expected ONNX sequence length ${SEQ_LEN}, received ${inputShape[1]}`);
-  }
-  if (typeof inputShape[2] === 'number' && inputShape[2] !== FRAME_FEATURE_DIM) {
-    throw new Error(`Expected ONNX feature dim ${FRAME_FEATURE_DIM}, received ${inputShape[2]}`);
-  }
-  const outputMeta = loadedSession.outputMetadata[0];
-  if (outputMeta?.isTensor) {
-    const outputShape = outputMeta.shape;
-    const classDim = outputShape[outputShape.length - 1];
-    if (typeof classDim === 'number' && classDim !== loadedLabels.length) {
-      throw new Error(`Expected ONNX output classes ${loadedLabels.length}, received ${classDim}`);
-    }
+  if (loadedLabels.length === 0) {
+    throw new Error('ONNX labels are empty');
   }
 }
 
