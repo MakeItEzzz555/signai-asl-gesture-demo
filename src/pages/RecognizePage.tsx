@@ -55,7 +55,7 @@ const CONFIRMATION_FRAMES = DEFAULT_SEGMENTATION_CONFIG.confirmFrames;
 const BUFFER_FRAMES = SEQUENCE_FRAMES;
 const CUSTOM_EMIT_COOLDOWN_FRAMES = 24;
 
-type RecognizerMode = 'onnx' | 'custom';
+type RecognizerMode = 'onnx' | 'hybrid';
 
 // Number of frames to hold the "face interaction active" flag after the last
 // detected interaction.  Prevents a single missed detection frame from briefly
@@ -264,7 +264,15 @@ function predictionReducer(state: PredictionState, action: PredictionAction): Pr
 // ---------------------------------------------------------------------------
 
 export default function RecognizePage() {
-  const { accessibility, setAccessibility, modelReady, modelLoading, modelError, isModelTrained } = useApp();
+  const {
+    accessibility,
+    setAccessibility,
+    customTranslations,
+    modelReady,
+    modelLoading,
+    modelError,
+    isModelTrained,
+  } = useApp();
   const language = accessibility.language;
   const [pred, dispatch] = useReducer(predictionReducer, INITIAL_PRED_STATE);
   const [recognizedWords, setRecognizedWords] = useState<RecognizedWord[]>([]);
@@ -285,6 +293,7 @@ export default function RecognizePage() {
   const autoSpeakRef = useRef(accessibility.autoSpeak);
   const audioEnabledRef = useRef(accessibility.audioEnabled);
   const languageRef = useRef(accessibility.language);
+  const customTranslationsRef = useRef(customTranslations);
 
   // Stable setter (React guarantees identity, captured in ref for the
   // empty-deps contract on onLandmarks).
@@ -319,6 +328,10 @@ export default function RecognizePage() {
   }, [accessibility.autoSpeak, accessibility.audioEnabled, accessibility.language]);
 
   useEffect(() => {
+    customTranslationsRef.current = customTranslations;
+  }, [customTranslations]);
+
+  useEffect(() => {
     recognizerModeRef.current = recognizerMode;
   }, [recognizerMode]);
 
@@ -342,9 +355,9 @@ export default function RecognizePage() {
   // at render time — switching language instantly retranslates the whole output.
   const displaySentence = useMemo(
     () => [...recognizedWords].reverse()
-      .map(w => translateGesture(w.word, language))
+      .map(w => translateGesture(w.word, language, customTranslations))
       .join(' '),
-    [recognizedWords, language],
+    [recognizedWords, language, customTranslations],
   );
 
   const onLandmarks = useCallback((
@@ -368,7 +381,11 @@ export default function RecognizePage() {
       if (interaction && emittedFaceRegionRef.current === null) {
         const combinedLabel = getCombinedGestureLabel(rightLiveGestureRef.current, interaction.faceRegion);
         if (autoSpeakRef.current && audioEnabledRef.current) {
-          speak(translateGesture(combinedLabel, languageRef.current), LANGUAGE_BCP47[languageRef.current] ?? 'en-US', onMissingVoiceRef.current);
+          speak(
+            translateGesture(combinedLabel, languageRef.current, customTranslationsRef.current),
+            LANGUAGE_BCP47[languageRef.current] ?? 'en-US',
+            onMissingVoiceRef.current,
+          );
         }
         setRecognizedWordsRef.current(prev => [
           { word: combinedLabel, confidence: 100, timestamp: Date.now() },
@@ -386,12 +403,15 @@ export default function RecognizePage() {
       }
     }
 
-    if (recognizerModeRef.current === 'custom') {
-      if (!isCustomModelReady()) return;
+    if (recognizerModeRef.current === 'hybrid' && isCustomModelReady()) {
 
       const result = predictCustomModel(features);
       const liveLabel = result && result.confidence >= CONFIDENCE_THRESHOLD ? result.label : null;
       if (customCooldownRef.current > 0) customCooldownRef.current--;
+
+      if (!liveLabel) {
+        resetCustomPredictionState();
+      }
 
       if (liveLabel && liveLabel === customLastLabelRef.current) {
         customStableCountRef.current = Math.min(CONFIRMATION_FRAMES, customStableCountRef.current + 1);
@@ -431,10 +451,14 @@ export default function RecognizePage() {
           ...prev.slice(0, 49),
         ]);
         if (autoSpeakRef.current && audioEnabledRef.current) {
-          speak(translateGesture(emittedHandOnlyWord, languageRef.current), LANGUAGE_BCP47[languageRef.current] ?? 'en-US', onMissingVoiceRef.current);
+          speak(
+            translateGesture(emittedHandOnlyWord, languageRef.current, customTranslationsRef.current),
+            LANGUAGE_BCP47[languageRef.current] ?? 'en-US',
+            onMissingVoiceRef.current,
+          );
         }
       }
-      return;
+      if (liveLabel) return;
     }
 
     if (!isOnnxModelReady()) return;
@@ -463,7 +487,11 @@ export default function RecognizePage() {
                 ...prev.slice(0, 49),
               ]);
               if (autoSpeakRef.current && audioEnabledRef.current) {
-                speak(translateGesture(word, languageRef.current), LANGUAGE_BCP47[languageRef.current] ?? 'en-US', onMissingVoiceRef.current);
+                speak(
+                  translateGesture(word, languageRef.current, customTranslationsRef.current),
+                  LANGUAGE_BCP47[languageRef.current] ?? 'en-US',
+                  onMissingVoiceRef.current,
+                );
               }
             }
           }
@@ -498,7 +526,7 @@ export default function RecognizePage() {
   const handleRecognizerModeChange = useCallback(async (mode: RecognizerMode) => {
     if (mode === recognizerMode) return;
 
-    if (mode === 'custom') {
+    if (mode === 'hybrid') {
       setCustomModelNotice(null);
       if (!isCustomModelReady()) {
         setCustomModelLoading(true);
@@ -534,11 +562,11 @@ export default function RecognizePage() {
   const handleSpeak = useCallback(() => {
     if (!accessibility.audioEnabled) return;
     const currentTranslated = pred.currentGesture
-      ? translateGesture(pred.currentGesture, accessibility.language)
+      ? translateGesture(pred.currentGesture, accessibility.language, customTranslations)
       : null;
     const text = displaySentence.trim() || currentTranslated;
     if (text) speak(text, LANGUAGE_BCP47[accessibility.language] ?? 'en-US', onMissingVoice);
-  }, [accessibility.audioEnabled, accessibility.language, displaySentence, pred.currentGesture, onMissingVoice]);
+  }, [accessibility.audioEnabled, accessibility.language, customTranslations, displaySentence, pred.currentGesture, onMissingVoice]);
 
   useEffect(() => {
     return () => {
@@ -599,11 +627,11 @@ export default function RecognizePage() {
                 {/* Model source badge */}
                 <span className={cn(
                   'ml-1 px-2 py-0.5 rounded text-[10px] font-mono font-semibold border',
-                  recognizerMode === 'custom'
+                  recognizerMode === 'hybrid'
                     ? 'bg-yellow-500/10 text-yellow-400 border-yellow-500/30'
                     : 'bg-primary/10 text-primary border-primary/20',
                 )}>
-                  {recognizerMode === 'custom' ? 'Custom TF.js' : 'ONNX Dynamic'}
+                  {recognizerMode === 'hybrid' ? 'Hybrid TF.js + ONNX' : 'ONNX Dynamic'}
                 </span>
               </div>
               <div className="flex items-center gap-3 font-mono text-xs text-muted-foreground">
@@ -666,7 +694,7 @@ export default function RecognizePage() {
                       ? <CheckCircle className="w-4 h-4 text-primary" />
                       : <div className="w-4 h-4 border-2 border-muted-foreground border-t-transparent rounded-full animate-spin" />}
                     <span className="text-sm font-bold text-foreground uppercase" style={{ fontFamily: 'Space Grotesk' }}>
-                      {translateGesture(pred.currentGesture, language)}
+                      {translateGesture(pred.currentGesture, language, customTranslations)}
                     </span>
                   </div>
                   <div className="text-right">
@@ -721,11 +749,11 @@ export default function RecognizePage() {
                   disabled={
                     camState.isLoading ||
                     (recognizerMode === 'onnx' && modelLoading) ||
-                    (recognizerMode === 'custom' && customModelLoading)
+                    (recognizerMode === 'hybrid' && customModelLoading)
                   }
                   className="flex items-center gap-2 px-4 py-2 rounded-lg bg-primary text-primary-foreground text-sm font-medium hover:opacity-90 transition-opacity disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  {(recognizerMode === 'onnx' && modelLoading) || (recognizerMode === 'custom' && customModelLoading) ? (
+                  {(recognizerMode === 'onnx' && modelLoading) || (recognizerMode === 'hybrid' && customModelLoading) ? (
                     <>
                       <Loader className="w-4 h-4 animate-spin" />
                       Loading Model...
@@ -768,16 +796,16 @@ export default function RecognizePage() {
                   ONNX
                 </button>
                 <button
-                  onClick={() => void handleRecognizerModeChange('custom')}
+                  onClick={() => void handleRecognizerModeChange('hybrid')}
                   disabled={customModelLoading}
                   className={cn(
                     'px-3 py-1.5 rounded-md text-xs font-mono font-semibold transition-colors disabled:opacity-50',
-                    recognizerMode === 'custom'
+                    recognizerMode === 'hybrid'
                       ? 'bg-yellow-500/20 text-yellow-400'
                       : 'text-muted-foreground hover:text-foreground',
                   )}
                 >
-                  {customModelLoading ? 'Loading...' : 'Custom'}
+                  {customModelLoading ? 'Loading...' : 'Hybrid'}
                 </button>
               </div>
 
@@ -800,7 +828,7 @@ export default function RecognizePage() {
                 </p>
               )}
 
-              {recognizerMode === 'custom' && !customModelReady && !customModelLoading && (
+              {recognizerMode === 'hybrid' && !customModelReady && !customModelLoading && (
                 <p className="text-xs text-warning">
                   Train or load a custom model first.
                 </p>
@@ -832,7 +860,7 @@ export default function RecognizePage() {
                 <span className="text-muted-foreground text-xs w-24 shrink-0">Primary Hand:</span>
                 {camState.rawLandmarks && pred.liveGesture && pred.liveConfidence >= 80 ? (
                   <span className="text-primary font-bold uppercase">
-                    {translateGesture(pred.liveGesture, language)}{' '}
+                    {translateGesture(pred.liveGesture, language, customTranslations)}{' '}
                     <span className="font-normal text-xs">({Math.round(pred.liveConfidence)}%)</span>
                   </span>
                 ) : (
@@ -862,7 +890,7 @@ export default function RecognizePage() {
                   pred.liveGesture ? 'text-primary' : 'text-muted-foreground',
                 )} style={{ fontFamily: 'Space Grotesk' }}>
                   {camState.rawLandmarks
-                    ? (pred.liveGesture ? translateGesture(pred.liveGesture, language) : '…')
+                    ? (pred.liveGesture ? translateGesture(pred.liveGesture, language, customTranslations) : '…')
                     : 'Not detected'}
                 </span>
                 {camState.rawLandmarks && pred.liveConfidence > 0 && (
@@ -888,6 +916,7 @@ export default function RecognizePage() {
                 {translateGesture(
                   getCombinedGestureLabel(pred.liveGesture, camState.handFaceInteraction.faceRegion),
                   language,
+                  customTranslations,
                 )}
               </div>
               <div className="grid grid-cols-2 gap-2 text-[11px] font-mono">
@@ -919,7 +948,7 @@ export default function RecognizePage() {
                     ? pred.isConfirmed ? 'text-primary' : 'text-foreground'
                     : 'text-muted-foreground',
                 )} style={{ fontFamily: 'Space Grotesk' }}>
-                  {pred.currentGesture ? translateGesture(pred.currentGesture, language) : '—'}
+                  {pred.currentGesture ? translateGesture(pred.currentGesture, language, customTranslations) : '—'}
                 </span>
               </div>
               {/* Confidence bar */}
@@ -974,7 +1003,7 @@ export default function RecognizePage() {
                   <p className="text-[11px] font-mono text-warning">
                     Added:{' '}
                     <span className="font-bold uppercase">
-                      {translateGesture(pred.pendingWord, language)}
+                      {translateGesture(pred.pendingWord, language, customTranslations)}
                     </span>{' '}
                     <span className="opacity-70">({pred.pendingConfidence}%)</span>
                   </p>
@@ -1045,7 +1074,7 @@ export default function RecognizePage() {
                       'text-sm font-bold uppercase',
                       i === 0 ? 'text-primary' : 'text-foreground',
                     )}>
-                      {translateGesture(item.label, language)}
+                      {translateGesture(item.label, language, customTranslations)}
                     </span>
                     <span className="text-xs font-mono text-muted-foreground">
                       {item.score}%
@@ -1089,7 +1118,7 @@ export default function RecognizePage() {
                     'text-sm font-bold uppercase',
                     i === 0 ? 'text-primary' : 'text-foreground',
                   )}>
-                    {translateGesture(item.word, language)}
+                    {translateGesture(item.word, language, customTranslations)}
                   </span>
                   <span className="text-xs font-mono text-muted-foreground">
                     {item.confidence}%

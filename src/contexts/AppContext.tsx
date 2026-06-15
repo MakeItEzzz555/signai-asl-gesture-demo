@@ -10,7 +10,12 @@
  */
 
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
-import { type LanguageCode, LANGUAGES } from '../i18n/translations';
+import {
+  type CustomTranslations,
+  type LanguageCode,
+  LANGUAGES,
+  normalizeGestureLabel,
+} from '../i18n/translations';
 import { disposeModel } from '../ml/model';
 import { setCloudVoicesEnabled } from '../utils/tts';
 
@@ -74,11 +79,16 @@ interface AppContextType {
   setAccessibility: (partial: Partial<Accessibility>) => void;
 
   dataset: Dataset;
+  customTranslations: CustomTranslations;
   addSample: (sample: GestureSample) => void;
   removeLabel: (label: string) => void;
   clearDataset: () => void;
   importDataset: (samples: GestureSample[]) => void;
   mergeDataset: (samples: GestureSample[]) => void;
+  setCustomTranslation: (label: string, language: LanguageCode, value: string) => void;
+  removeCustomTranslations: (label: string) => void;
+  mergeCustomTranslations: (translations: CustomTranslations) => void;
+  clearCustomTranslations: () => void;
 
   trainingConfig: TrainingConfig;
   setTrainingConfig: (partial: Partial<TrainingConfig>) => void;
@@ -119,6 +129,30 @@ function labelsFromSamples(samples: GestureSample[]): string[] {
   return Array.from(new Set(samples.map(s => s.label)));
 }
 
+function normalizeCustomTranslations(translations: unknown): CustomTranslations {
+  if (!translations || typeof translations !== 'object' || Array.isArray(translations)) return {};
+
+  const validLanguages = new Set<LanguageCode>(LANGUAGES.map(l => l.code));
+  const normalized: CustomTranslations = {};
+
+  for (const [label, entries] of Object.entries(translations as Record<string, unknown>)) {
+    const labelKey = normalizeGestureLabel(label);
+    if (!labelKey || !entries || typeof entries !== 'object' || Array.isArray(entries)) continue;
+
+    for (const [lang, value] of Object.entries(entries as Record<string, unknown>)) {
+      if (!validLanguages.has(lang as LanguageCode) || typeof value !== 'string') continue;
+      const trimmed = value.trim();
+      if (!trimmed) continue;
+      normalized[labelKey] = {
+        ...normalized[labelKey],
+        [lang]: trimmed,
+      };
+    }
+  }
+
+  return normalized;
+}
+
 export function AppProvider({ children }: { children: React.ReactNode }) {
   const [accessibility, setAccessibilityState] = useState<Accessibility>(DEFAULT_ACCESSIBILITY);
 
@@ -126,6 +160,7 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     samples: [],
     labels: [],
   });
+  const [customTranslations, setCustomTranslations] = useState<CustomTranslations>({});
 
   const [trainingConfig, setTrainingConfigState] = useState<TrainingConfig>(DEFAULT_TRAINING_CONFIG);
   const [trainingLogs, setTrainingLogs] = useState<TrainingLog[]>([]);
@@ -169,11 +204,17 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
       labels: prev.labels.filter(l => l !== label),
       samples: prev.samples.filter(s => s.label !== label),
     }));
+    setCustomTranslations(prev => {
+      const next = { ...prev };
+      delete next[normalizeGestureLabel(label)];
+      return next;
+    });
     resetTrainingState();
   }, [resetTrainingState]);
 
   const clearDataset = useCallback(() => {
     setDataset({ samples: [], labels: [] });
+    setCustomTranslations({});
     resetTrainingState();
   }, [resetTrainingState]);
 
@@ -194,6 +235,61 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     resetTrainingState();
   }, [resetTrainingState]);
 
+  const setCustomTranslation = useCallback((label: string, language: LanguageCode, value: string) => {
+    const labelKey = normalizeGestureLabel(label);
+    const trimmed = value.trim();
+    if (!labelKey) return;
+
+    setCustomTranslations(prev => {
+      const current = prev[labelKey] ?? {};
+      if (!trimmed) {
+        const nextEntry = { ...current };
+        delete nextEntry[language];
+        const next = { ...prev };
+        if (Object.keys(nextEntry).length === 0) {
+          delete next[labelKey];
+        } else {
+          next[labelKey] = nextEntry;
+        }
+        return next;
+      }
+
+      return {
+        ...prev,
+        [labelKey]: {
+          ...current,
+          [language]: trimmed,
+        },
+      };
+    });
+  }, []);
+
+  const removeCustomTranslations = useCallback((label: string) => {
+    setCustomTranslations(prev => {
+      const next = { ...prev };
+      delete next[normalizeGestureLabel(label)];
+      return next;
+    });
+  }, []);
+
+  const mergeCustomTranslations = useCallback((translations: CustomTranslations) => {
+    const normalized = normalizeCustomTranslations(translations);
+    setCustomTranslations(prev => {
+      const next: CustomTranslations = { ...prev };
+      for (const [label, entries] of Object.entries(normalized)) {
+        next[label] = {
+          ...(next[label] ?? {}),
+          ...entries,
+        };
+      }
+      return next;
+    });
+  }, []);
+
+  const clearCustomTranslations = useCallback(() => {
+    setCustomTranslations({});
+  }, []);
+
   // Restore accessibility settings from localStorage on first mount.
   useEffect(() => {
     const stored = localStorage.getItem('signai:accessibility');
@@ -211,6 +307,18 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     }
   }, []);
 
+  // Restore custom gesture translations from localStorage on first mount.
+  useEffect(() => {
+    const stored = localStorage.getItem('signai:customTranslations');
+    if (!stored) return;
+    try {
+      const parsed = JSON.parse(stored) as CustomTranslations;
+      setCustomTranslations(normalizeCustomTranslations(parsed));
+    } catch {
+      // ignore malformed data
+    }
+  }, []);
+
   // Sync useCloudTts preference into the TTS routing module.
   useEffect(() => {
     setCloudVoicesEnabled(accessibility.useCloudTts);
@@ -220,6 +328,10 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     localStorage.setItem('signai:accessibility', JSON.stringify(accessibility));
   }, [accessibility]);
+
+  useEffect(() => {
+    localStorage.setItem('signai:customTranslations', JSON.stringify(customTranslations));
+  }, [customTranslations]);
 
   useEffect(() => {
     const root = document.documentElement;
@@ -238,11 +350,16 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     setAccessibility,
 
     dataset,
+    customTranslations,
     addSample,
     removeLabel,
     clearDataset,
     importDataset,
     mergeDataset,
+    setCustomTranslation,
+    removeCustomTranslations,
+    mergeCustomTranslations,
+    clearCustomTranslations,
 
     trainingConfig,
     setTrainingConfig,
@@ -263,11 +380,16 @@ export function AppProvider({ children }: { children: React.ReactNode }) {
     accessibility,
     setAccessibility,
     dataset,
+    customTranslations,
     addSample,
     removeLabel,
     clearDataset,
     importDataset,
     mergeDataset,
+    setCustomTranslation,
+    removeCustomTranslations,
+    mergeCustomTranslations,
+    clearCustomTranslations,
     trainingConfig,
     setTrainingConfig,
     trainingLogs,

@@ -1,4 +1,10 @@
 import type { GestureSample, Dataset } from '../contexts/AppContext';
+import {
+  LANGUAGES,
+  normalizeGestureLabel,
+  type CustomTranslations,
+  type LanguageCode,
+} from '../i18n/translations';
 
 export function oneHotEncode(labels: string[], labelNames: string[]): number[][] {
   return labels.map(label => {
@@ -84,12 +90,43 @@ export function prepareTensors(
   return { features, labels, labelIndices };
 }
 
-export function exportDatasetJSON(samples: GestureSample[]): string {
-  return JSON.stringify(samples, null, 2);
+export interface DatasetExportBundle {
+  version: 2;
+  samples: GestureSample[];
+  customTranslations?: CustomTranslations;
 }
 
-export function downloadDataset(samples: GestureSample[], filename = 'sign-language-dataset.json'): void {
-  const json = exportDatasetJSON(samples);
+export interface ParsedDatasetImport {
+  samples: GestureSample[];
+  customTranslations: CustomTranslations;
+}
+
+function hasCustomTranslations(customTranslations?: CustomTranslations): boolean {
+  return Boolean(customTranslations && Object.keys(customTranslations).length > 0);
+}
+
+export function exportDatasetJSON(
+  samples: GestureSample[],
+  customTranslations?: CustomTranslations
+): string {
+  if (!hasCustomTranslations(customTranslations)) {
+    return JSON.stringify(samples, null, 2);
+  }
+
+  const bundle: DatasetExportBundle = {
+    version: 2,
+    samples,
+    customTranslations,
+  };
+  return JSON.stringify(bundle, null, 2);
+}
+
+export function downloadDataset(
+  samples: GestureSample[],
+  filename = 'sign-language-dataset.json',
+  customTranslations?: CustomTranslations
+): void {
+  const json = exportDatasetJSON(samples, customTranslations);
   const blob = new Blob([json], { type: 'application/json' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
@@ -99,9 +136,8 @@ export function downloadDataset(samples: GestureSample[], filename = 'sign-langu
   URL.revokeObjectURL(url);
 }
 
-export function parseImportedDataset(json: string): GestureSample[] {
-  const data = JSON.parse(json);
-  if (!Array.isArray(data)) throw new Error('Dataset must be a JSON array');
+function parseSampleArray(data: unknown): GestureSample[] {
+  if (!Array.isArray(data)) throw new Error('Dataset samples must be a JSON array');
 
   return data.map((item: unknown, i: number) => {
     const obj = item as Record<string, unknown>;
@@ -119,6 +155,54 @@ export function parseImportedDataset(json: string): GestureSample[] {
       timestamp: typeof obj.timestamp === 'number' ? obj.timestamp : Date.now(),
     };
   });
+}
+
+function parseCustomTranslations(data: unknown): CustomTranslations {
+  if (!data || typeof data !== 'object' || Array.isArray(data)) return {};
+
+  const validLanguages = new Set<LanguageCode>(LANGUAGES.map(l => l.code));
+  const translations: CustomTranslations = {};
+
+  for (const [label, entries] of Object.entries(data as Record<string, unknown>)) {
+    const labelKey = normalizeGestureLabel(label);
+    if (!labelKey || !entries || typeof entries !== 'object' || Array.isArray(entries)) continue;
+
+    for (const [lang, value] of Object.entries(entries as Record<string, unknown>)) {
+      if (!validLanguages.has(lang as LanguageCode) || typeof value !== 'string') continue;
+      const trimmed = value.trim();
+      if (!trimmed) continue;
+      translations[labelKey] = {
+        ...translations[labelKey],
+        [lang]: trimmed,
+      };
+    }
+  }
+
+  return translations;
+}
+
+export function parseImportedDatasetBundle(json: string): ParsedDatasetImport {
+  const data = JSON.parse(json);
+  if (Array.isArray(data)) {
+    return {
+      samples: parseSampleArray(data),
+      customTranslations: {},
+    };
+  }
+
+  if (!data || typeof data !== 'object') {
+    throw new Error('Dataset must be a JSON array or object');
+  }
+
+  const obj = data as Record<string, unknown>;
+  return {
+    samples: parseSampleArray(obj.samples),
+    customTranslations: parseCustomTranslations(obj.customTranslations),
+  };
+}
+
+export function parseImportedDataset(json: string): GestureSample[] {
+  return parseImportedDatasetBundle(json).samples;
 }
 
 export function getSampleCounts(dataset: Dataset): Record<string, number> {

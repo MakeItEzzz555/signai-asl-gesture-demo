@@ -11,7 +11,8 @@ import { useState, useRef, useCallback, useEffect } from 'react';
 import { Camera, Download, Upload, Trash2, Plus, CheckCircle, AlertCircle, StopCircle } from 'lucide-react';
 import { useApp, DEFAULT_GESTURES } from '../contexts/AppContext';
 import { useMediaPipe } from '../hooks/useMediaPipe';
-import { downloadDataset, parseImportedDataset, getSampleCounts, generateDemoDataset } from '../dataset/datasetUtils';
+import { downloadDataset, parseImportedDatasetBundle, getSampleCounts, generateDemoDataset } from '../dataset/datasetUtils';
+import { LANGUAGES, normalizeGestureLabel } from '../i18n/translations';
 import type { Landmark } from '../utils/landmarks';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
@@ -20,9 +21,22 @@ const MIN_SAMPLES_PER_CLASS = 20;
 const CAPTURE_INTERVAL_MS = 200; // Capture one sample every 200ms when recording
 
 export default function DatasetPage() {
-  const { dataset, addSample, removeLabel, clearDataset, importDataset, mergeDataset } = useApp();
+  const {
+    accessibility,
+    dataset,
+    customTranslations,
+    addSample,
+    removeLabel,
+    clearDataset,
+    importDataset,
+    mergeDataset,
+    setCustomTranslation,
+    mergeCustomTranslations,
+  } = useApp();
   const [selectedGesture, setSelectedGesture] = useState(DEFAULT_GESTURES[0]);
   const [customGesture, setCustomGesture] = useState('');
+  const [customGestureTranslation, setCustomGestureTranslation] = useState('');
+  const [selectedTranslation, setSelectedTranslation] = useState('');
   const [isRecording, setIsRecording] = useState(false);
   const [captureCount, setCaptureCount] = useState(0);
   const captureCountRef = useRef(0);
@@ -43,6 +57,12 @@ export default function DatasetPage() {
   });
 
   const sampleCounts = getSampleCounts(dataset);
+  const currentLanguage = accessibility.language;
+  const currentLanguageName = LANGUAGES.find(lang => lang.code === currentLanguage)?.nativeName ?? currentLanguage;
+  const selectedGestureKey = normalizeGestureLabel(selectedGesture);
+  const isSelectedDefaultGesture = DEFAULT_GESTURES.some(
+    gesture => normalizeGestureLabel(gesture) === selectedGestureKey,
+  );
 
   // All available gestures (default + any custom ones in dataset)
   const allGestures = Array.from(new Set([
@@ -94,7 +114,7 @@ export default function DatasetPage() {
       toast.error('No samples to export');
       return;
     }
-    downloadDataset(dataset.samples);
+    downloadDataset(dataset.samples, 'sign-language-dataset.json', customTranslations);
     toast.success(`Exported ${dataset.samples.length} samples`);
   };
 
@@ -113,12 +133,15 @@ export default function DatasetPage() {
     if (!file) return;
     try {
       const text = await file.text();
-      const samples = parseImportedDataset(text);
+      const parsed = parseImportedDatasetBundle(text);
+      const { samples } = parsed;
       if (importModeRef.current === 'merge') {
         mergeDataset(samples);
+        mergeCustomTranslations(parsed.customTranslations);
         toast.success(`Added ${describeSamples(samples)}`);
       } else {
         importDataset(samples);
+        mergeCustomTranslations(parsed.customTranslations);
         toast.success(`Imported ${describeSamples(samples)}`);
       }
     } catch (err) {
@@ -152,9 +175,22 @@ export default function DatasetPage() {
       toast.error('Gesture already exists');
       return;
     }
+    if (customGestureTranslation.trim()) {
+      setCustomTranslation(name, currentLanguage, customGestureTranslation);
+    }
     setSelectedGesture(name);
     setCustomGesture('');
+    setCustomGestureTranslation('');
     toast.success(`Added gesture: ${name}`);
+  };
+
+  useEffect(() => {
+    setSelectedTranslation(customTranslations[selectedGestureKey]?.[currentLanguage] ?? '');
+  }, [customTranslations, currentLanguage, selectedGestureKey]);
+
+  const handleSelectedTranslationChange = (value: string) => {
+    setSelectedTranslation(value);
+    setCustomTranslation(selectedGesture, currentLanguage, value);
   };
 
   return (
@@ -327,21 +363,45 @@ export default function DatasetPage() {
               ))}
             </div>
             {/* Add custom gesture */}
-            <div className="flex gap-2">
+            <div className="space-y-2">
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={customGesture}
+                  onChange={e => setCustomGesture(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && handleAddCustom()}
+                  placeholder="Add custom gesture..."
+                  className="flex-1 px-3 py-1.5 rounded-lg bg-muted border border-border text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary/50"
+                />
+                <button
+                  onClick={handleAddCustom}
+                  className="px-3 py-1.5 rounded-lg bg-primary/20 text-primary border border-primary/30 text-sm hover:bg-primary/30 transition-colors"
+                >
+                  <Plus className="w-4 h-4" />
+                </button>
+              </div>
               <input
                 type="text"
-                value={customGesture}
-                onChange={e => setCustomGesture(e.target.value)}
+                value={customGestureTranslation}
+                onChange={e => setCustomGestureTranslation(e.target.value)}
                 onKeyDown={e => e.key === 'Enter' && handleAddCustom()}
-                placeholder="Add custom gesture..."
-                className="flex-1 px-3 py-1.5 rounded-lg bg-muted border border-border text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary/50"
+                placeholder={`Optional ${currentLanguageName} translation for new gesture...`}
+                className="w-full px-3 py-1.5 rounded-lg bg-muted/60 border border-border text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary/50"
               />
-              <button
-                onClick={handleAddCustom}
-                className="px-3 py-1.5 rounded-lg bg-primary/20 text-primary border border-primary/30 text-sm hover:bg-primary/30 transition-colors"
-              >
-                <Plus className="w-4 h-4" />
-              </button>
+              {!isSelectedDefaultGesture && (
+                <div>
+                  <label className="text-[10px] text-muted-foreground block mb-1">
+                    {currentLanguageName} translation for "{selectedGesture}"
+                  </label>
+                  <input
+                    type="text"
+                    value={selectedTranslation}
+                    onChange={e => handleSelectedTranslationChange(e.target.value)}
+                    placeholder="Leave empty to show the raw label"
+                    className="w-full px-3 py-1.5 rounded-lg bg-muted/60 border border-border text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary/50"
+                  />
+                </div>
+              )}
             </div>
           </div>
         </div>
