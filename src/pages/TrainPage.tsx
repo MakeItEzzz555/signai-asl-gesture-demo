@@ -8,11 +8,11 @@
  * - Post-training evaluation trigger
  */
 
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback, useMemo, useRef } from 'react';
 import { Brain, Play, Save, Upload, AlertCircle, CheckCircle, Settings2 } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import { useApp } from '../contexts/AppContext';
-import { prepareTensors } from '../dataset/datasetUtils';
+import { isFaceInteractiveGesture, prepareTensors } from '../dataset/datasetUtils';
 import { trainModel, saveModel, loadModel, computeMetrics } from '../ml/model';
 import type { TrainingLog } from '../contexts/AppContext';
 import { cn } from '@/lib/utils';
@@ -32,7 +32,15 @@ export default function TrainPage() {
   const [latestLog, setLatestLog] = useState<TrainingLog | null>(null);
   const abortRef = useRef(false);
 
-  const canTrain = dataset.samples.length >= 10 && dataset.labels.length >= 2;
+  const trainableSamples = useMemo(
+    () => dataset.samples.filter(sample => !isFaceInteractiveGesture(sample.label)),
+    [dataset.samples],
+  );
+  const trainableLabels = useMemo(
+    () => Array.from(new Set(trainableSamples.map(sample => sample.label))),
+    [trainableSamples],
+  );
+  const canTrain = trainableSamples.length >= 10 && trainableLabels.length >= 2;
 
   const handleTrain = useCallback(async () => {
     if (!canTrain) {
@@ -47,14 +55,14 @@ export default function TrainPage() {
     abortRef.current = false;
 
     try {
-      const { features, labels, labelIndices } = prepareTensors(dataset.samples, dataset.labels);
+      const { features, labels, labelIndices } = prepareTensors(trainableSamples, trainableLabels);
       const logs: TrainingLog[] = [];
 
       const model = await trainModel(
         features,
         labels,
         trainingConfig,
-        dataset.labels,
+        trainableLabels,
         (log) => {
           logs.push(log);
           setTrainingLogs([...logs]);
@@ -65,7 +73,7 @@ export default function TrainPage() {
       );
 
       // Compute evaluation metrics on full dataset
-      const metrics = computeMetrics(features, labelIndices, dataset.labels);
+      const metrics = computeMetrics(features, labelIndices, trainableLabels);
       setEvaluationMetrics(metrics);
       setIsModelTrained(true);
 
@@ -75,7 +83,7 @@ export default function TrainPage() {
     } finally {
       setIsTraining(false);
     }
-  }, [canTrain, dataset, trainingConfig, setTrainingLogs, setEvaluationMetrics, setIsModelTrained]);
+  }, [canTrain, trainableSamples, trainableLabels, trainingConfig, setTrainingLogs, setEvaluationMetrics, setIsModelTrained]);
 
   const handleSave = async () => {
     try {
@@ -124,17 +132,17 @@ export default function TrainPage() {
             <div className="space-y-2">
               <div className="flex justify-between items-center">
                 <span className="text-xs text-muted-foreground">Total Samples</span>
-                <span className="text-xs font-mono text-foreground">{dataset.samples.length}</span>
+                <span className="text-xs font-mono text-foreground">{trainableSamples.length}</span>
               </div>
               <div className="flex justify-between items-center">
                 <span className="text-xs text-muted-foreground">Classes</span>
-                <span className="text-xs font-mono text-foreground">{dataset.labels.length}</span>
+                <span className="text-xs font-mono text-foreground">{trainableLabels.length}</span>
               </div>
               <div className="flex justify-between items-center">
                 <span className="text-xs text-muted-foreground">Avg per class</span>
                 <span className="text-xs font-mono text-foreground">
-                  {dataset.labels.length > 0
-                    ? Math.round(dataset.samples.length / dataset.labels.length)
+                  {trainableLabels.length > 0
+                    ? Math.round(trainableSamples.length / trainableLabels.length)
                     : 0}
                 </span>
               </div>

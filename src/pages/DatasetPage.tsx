@@ -7,47 +7,79 @@
  * - Delete individual classes or clear all
  */
 
-import { useState, useRef, useCallback, useEffect } from 'react';
+import { useState, useRef, useCallback, useEffect, useMemo } from 'react';
 import { Camera, Download, Upload, Trash2, Plus, CheckCircle, AlertCircle, StopCircle } from 'lucide-react';
 import { useApp, DEFAULT_GESTURES } from '../contexts/AppContext';
 import { useMediaPipe } from '../hooks/useMediaPipe';
-import { downloadDataset, parseImportedDataset, getSampleCounts } from '../dataset/datasetUtils';
+import {
+  downloadDataset,
+  parseImportedDatasetBundle,
+  getSampleCounts,
+  generateDemoDataset,
+  isFaceInteractiveGesture,
+} from '../dataset/datasetUtils';
+import { LANGUAGES, normalizeGestureLabel } from '../i18n/translations';
 import type { Landmark } from '../utils/landmarks';
+import { toHandOnlyFeatures } from '../utils/landmarks';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 
 const MIN_SAMPLES_PER_CLASS = 20;
 const CAPTURE_INTERVAL_MS = 200; // Capture one sample every 200ms when recording
+const TRAINABLE_DEFAULT_GESTURES = DEFAULT_GESTURES.filter(gesture => !isFaceInteractiveGesture(gesture));
 
 export default function DatasetPage() {
-  const { dataset, addSample, removeLabel, clearDataset, importDataset } = useApp();
-  const [selectedGesture, setSelectedGesture] = useState(DEFAULT_GESTURES[0]);
+  const {
+    accessibility,
+    dataset,
+    customTranslations,
+    addSample,
+    removeLabel,
+    clearDataset,
+    importDataset,
+    mergeDataset,
+    setCustomTranslation,
+    mergeCustomTranslations,
+  } = useApp();
+  const [selectedGesture, setSelectedGesture] = useState(TRAINABLE_DEFAULT_GESTURES[0] ?? DEFAULT_GESTURES[0]);
   const [customGesture, setCustomGesture] = useState('');
+  const [customGestureTranslation, setCustomGestureTranslation] = useState('');
+  const [customGestureLabels, setCustomGestureLabels] = useState<string[]>([]);
+  const [selectedTranslation, setSelectedTranslation] = useState('');
   const [isRecording, setIsRecording] = useState(false);
   const [captureCount, setCaptureCount] = useState(0);
   const captureCountRef = useRef(0);
   const captureIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const latestFeaturesRef = useRef<number[] | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const importModeRef = useRef<'replace' | 'merge'>('replace');
 
   const onLandmarks = useCallback((features: number[], _raw: Landmark[] | null, handPresent: boolean, _isHeld: boolean, _rawLeft?: Landmark[] | null, _face?: Landmark[] | null) => {
     // Store features whenever ANY hand is present (right or left)
     const anyHandPresent = handPresent || (_rawLeft != null);
-    latestFeaturesRef.current = anyHandPresent ? features : null;
+    latestFeaturesRef.current = anyHandPresent ? toHandOnlyFeatures(features) : null;
   }, []);
 
   const { videoRef, canvasRef, state: camState, start, stop } = useMediaPipe({
     onLandmarks,
     showOverlay: true,
+    enableFaceTracking: false,
   });
 
   const sampleCounts = getSampleCounts(dataset);
+  const currentLanguage = accessibility.language;
+  const currentLanguageName = LANGUAGES.find(lang => lang.code === currentLanguage)?.nativeName ?? currentLanguage;
+  const selectedGestureKey = normalizeGestureLabel(selectedGesture);
+  const isSelectedDefaultGesture = DEFAULT_GESTURES.some(
+    gesture => normalizeGestureLabel(gesture) === selectedGestureKey,
+  );
 
   // All available gestures (default + any custom ones in dataset)
-  const allGestures = Array.from(new Set([
-    ...DEFAULT_GESTURES,
-    ...dataset.labels.filter(l => !DEFAULT_GESTURES.includes(l)),
-  ]));
+  const allGestures = useMemo(() => Array.from(new Set([
+    ...TRAINABLE_DEFAULT_GESTURES,
+    ...customGestureLabels,
+    ...dataset.labels.filter(l => !DEFAULT_GESTURES.includes(l) && !isFaceInteractiveGesture(l)),
+  ])), [customGestureLabels, dataset.labels]);
 
   const startRecording = useCallback(() => {
     if (!camState.isActive) {
@@ -93,8 +125,18 @@ export default function DatasetPage() {
       toast.error('No samples to export');
       return;
     }
-    downloadDataset(dataset.samples);
+    downloadDataset(dataset.samples, 'sign-language-dataset.json', customTranslations);
     toast.success(`Exported ${dataset.samples.length} samples`);
+  };
+
+  const describeSamples = (samples: { label: string }[]) => {
+    const classCount = new Set(samples.map(sample => sample.label)).size;
+    return `${samples.length} samples across ${classCount} ${classCount === 1 ? 'class' : 'classes'}`;
+  };
+
+  const openImport = (mode: 'replace' | 'merge') => {
+    importModeRef.current = mode;
+    fileInputRef.current?.click();
   };
 
   const handleImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -102,9 +144,25 @@ export default function DatasetPage() {
     if (!file) return;
     try {
       const text = await file.text();
-      const samples = parseImportedDataset(text);
-      importDataset(samples);
-      toast.success(`Imported ${samples.length} samples`);
+      const parsed = parseImportedDatasetBundle(text);
+      const samples = parsed.samples.filter(sample => !isFaceInteractiveGesture(sample.label));
+      const skippedFaceSamples = parsed.samples.length - samples.length;
+      if (samples.length === 0) {
+        toast.error(skippedFaceSamples > 0
+          ? `No trainable hand-only samples found; skipped ${skippedFaceSamples} face-touch samples`
+          : 'No samples found in dataset');
+        return;
+      }
+      if (importModeRef.current === 'merge') {
+        mergeDataset(samples);
+        mergeCustomTranslations(parsed.customTranslations);
+        toast.success(`Added ${describeSamples(samples)}${parsed.convertedToHandOnlyCount > 0 ? `; converted ${parsed.convertedToHandOnlyCount} old samples to hand-only` : ''}${skippedFaceSamples > 0 ? `; skipped ${skippedFaceSamples} face-touch samples` : ''}`);
+      } else {
+        importDataset(samples);
+        setCustomGestureLabels([]);
+        mergeCustomTranslations(parsed.customTranslations);
+        toast.success(`Imported ${describeSamples(samples)}${parsed.convertedToHandOnlyCount > 0 ? `; converted ${parsed.convertedToHandOnlyCount} old samples to hand-only` : ''}${skippedFaceSamples > 0 ? `; skipped ${skippedFaceSamples} face-touch samples` : ''}`);
+      }
     } catch (err) {
       toast.error(`Import failed: ${err instanceof Error ? err.message : 'Invalid file'}`);
     }
@@ -112,9 +170,20 @@ export default function DatasetPage() {
     if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
+  const handleLoadStarterDataset = () => {
+    const samples = generateDemoDataset(TRAINABLE_DEFAULT_GESTURES, 30);
+    if (samples.length === 0) {
+      toast.error('Starter dataset could not be generated');
+      return;
+    }
+    mergeDataset(samples);
+    toast.success(`Added ${describeSamples(samples)}`);
+  };
+
   const handleClear = () => {
     if (confirm('Clear all dataset samples? This cannot be undone.')) {
       clearDataset();
+      setCustomGestureLabels([]);
       toast.info('Dataset cleared');
     }
   };
@@ -122,13 +191,37 @@ export default function DatasetPage() {
   const handleAddCustom = () => {
     const name = customGesture.trim();
     if (!name) return;
+    if (isFaceInteractiveGesture(name)) {
+      toast.error('Face-touch gestures are handled in Recognize and are not trained here');
+      return;
+    }
     if (allGestures.includes(name)) {
       toast.error('Gesture already exists');
       return;
     }
+    if (customGestureTranslation.trim()) {
+      setCustomTranslation(name, currentLanguage, customGestureTranslation);
+    }
+    setCustomGestureLabels(prev => prev.includes(name) ? prev : [...prev, name]);
     setSelectedGesture(name);
     setCustomGesture('');
+    setCustomGestureTranslation('');
     toast.success(`Added gesture: ${name}`);
+  };
+
+  useEffect(() => {
+    setSelectedTranslation(customTranslations[selectedGestureKey]?.[currentLanguage] ?? '');
+  }, [customTranslations, currentLanguage, selectedGestureKey]);
+
+  useEffect(() => {
+    if (allGestures.length > 0 && !allGestures.includes(selectedGesture)) {
+      setSelectedGesture(allGestures[0]);
+    }
+  }, [allGestures, selectedGesture]);
+
+  const handleSelectedTranslationChange = (value: string) => {
+    setSelectedTranslation(value);
+    setCustomTranslation(selectedGesture, currentLanguage, value);
   };
 
   return (
@@ -166,9 +259,6 @@ export default function DatasetPage() {
                 )}
                 {camState.leftRawLandmarks && (
                   <span className="text-orange-400">Left Hand</span>
-                )}
-                {camState.facePresent && (
-                  <span className="text-purple-400">Face</span>
                 )}
               </div>
             </div>
@@ -301,21 +391,45 @@ export default function DatasetPage() {
               ))}
             </div>
             {/* Add custom gesture */}
-            <div className="flex gap-2">
+            <div className="space-y-2">
+              <div className="flex gap-2">
+                <input
+                  type="text"
+                  value={customGesture}
+                  onChange={e => setCustomGesture(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && handleAddCustom()}
+                  placeholder="Add custom gesture..."
+                  className="flex-1 px-3 py-1.5 rounded-lg bg-muted border border-border text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary/50"
+                />
+                <button
+                  onClick={handleAddCustom}
+                  className="px-3 py-1.5 rounded-lg bg-primary/20 text-primary border border-primary/30 text-sm hover:bg-primary/30 transition-colors"
+                >
+                  <Plus className="w-4 h-4" />
+                </button>
+              </div>
               <input
                 type="text"
-                value={customGesture}
-                onChange={e => setCustomGesture(e.target.value)}
+                value={customGestureTranslation}
+                onChange={e => setCustomGestureTranslation(e.target.value)}
                 onKeyDown={e => e.key === 'Enter' && handleAddCustom()}
-                placeholder="Add custom gesture..."
-                className="flex-1 px-3 py-1.5 rounded-lg bg-muted border border-border text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary/50"
+                placeholder={`Optional ${currentLanguageName} translation for new gesture...`}
+                className="w-full px-3 py-1.5 rounded-lg bg-muted/60 border border-border text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary/50"
               />
-              <button
-                onClick={handleAddCustom}
-                className="px-3 py-1.5 rounded-lg bg-primary/20 text-primary border border-primary/30 text-sm hover:bg-primary/30 transition-colors"
-              >
-                <Plus className="w-4 h-4" />
-              </button>
+              {!isSelectedDefaultGesture && (
+                <div>
+                  <label className="text-[10px] text-muted-foreground block mb-1">
+                    {currentLanguageName} translation for "{selectedGesture}"
+                  </label>
+                  <input
+                    type="text"
+                    value={selectedTranslation}
+                    onChange={e => handleSelectedTranslationChange(e.target.value)}
+                    placeholder="Leave empty to show the raw label"
+                    className="w-full px-3 py-1.5 rounded-lg bg-muted/60 border border-border text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary/50"
+                  />
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -365,6 +479,7 @@ export default function DatasetPage() {
                             onClick={() => {
                               if (confirm(`Delete all samples for "${label}"?`)) {
                                 removeLabel(label);
+                                setCustomGestureLabels(prev => prev.filter(customLabel => customLabel !== label));
                                 toast.info(`Removed "${label}" from dataset`);
                               }
                             }}
@@ -408,11 +523,25 @@ export default function DatasetPage() {
               Export Dataset (JSON)
             </button>
             <button
-              onClick={() => fileInputRef.current?.click()}
+              onClick={handleLoadStarterDataset}
+              className="w-full flex items-center gap-2 px-4 py-2.5 rounded-lg bg-primary/10 text-primary border border-primary/20 text-sm font-medium hover:bg-primary/20 transition-colors"
+            >
+              <Plus className="w-4 h-4" />
+              Load Starter Dataset
+            </button>
+            <button
+              onClick={() => openImport('merge')}
               className="w-full flex items-center gap-2 px-4 py-2.5 rounded-lg bg-muted text-foreground border border-border text-sm font-medium hover:bg-accent transition-colors"
             >
               <Upload className="w-4 h-4" />
-              Import Dataset (JSON)
+              Add Dataset to Current
+            </button>
+            <button
+              onClick={() => openImport('replace')}
+              className="w-full flex items-center gap-2 px-4 py-2.5 rounded-lg bg-muted text-foreground border border-border text-sm font-medium hover:bg-accent transition-colors"
+            >
+              <Upload className="w-4 h-4" />
+              Import Dataset (Replace)
             </button>
             <input
               ref={fileInputRef}
@@ -441,6 +570,8 @@ export default function DatasetPage() {
               <li>• Ensure good lighting on your hand</li>
               <li>• Keep background uncluttered</li>
               <li>• Hold gesture steady during capture</li>
+              <li>• Load the starter dataset before adding custom gesture samples</li>
+              <li>• Add Dataset to Current appends JSON samples without replacing existing data</li>
               <li>• Demo training is scoped to one-hand core gestures</li>
               <li>• Face-touch interactions are handled by the live heuristic, not custom training</li>
             </ul>

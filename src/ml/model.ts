@@ -2,14 +2,13 @@
  * model.ts — TensorFlow.js MLP Classifier for Sign Language Gesture Recognition
  *
  * Architecture:
- *   Input: 156-feature vector [right hand(63) | left hand(63) | face(30)]
+ *   Input: 63-feature vector [primary hand landmarks only]
  *   Hidden Layer 1: Dense(256, ReLU) + Dropout(0.3)
  *   Hidden Layer 2: Dense(128, ReLU) + Dropout(0.2)
  *   Output: Dense(numClasses, Softmax)
  *
- * The extended 156-dim input enables:
- *   - Bimanual gesture recognition (both hands detected)
- *   - Face-interaction gestures (hand position relative to face landmarks)
+ * Face-touch interactions are handled by the deterministic live heuristic,
+ * not by custom model training.
  *
  * Training:
  *   Loss: Categorical Cross-Entropy
@@ -17,17 +16,16 @@
  *   Metrics: Accuracy
  *
  * Backward compatibility:
- *   Models saved with the legacy 63-dim input are detected on load and
- *   flagged as incompatible — user must retrain.
+ *   Models saved with the previous 156-dim input are detected on load and
+ *   flagged as incompatible — user must retrain with hand-only samples.
  */
 
 import * as tf from '@tensorflow/tfjs';
 import type { TrainingConfig, TrainingLog, EvaluationMetrics } from '../contexts/AppContext';
+import { FEATURE_DIM_HAND, toHandOnlyFeatures } from '../utils/landmarks';
 
-/** Current feature dimension: 156 = right(63) + left(63) + face(30) */
-export const FEATURE_DIM = 156;
-/** Legacy feature dimension (single hand only) */
-const LEGACY_FEATURE_DIM = 63;
+/** Current feature dimension: 63 = one primary hand only */
+export const FEATURE_DIM = FEATURE_DIM_HAND;
 const FEATURE_VERSION_KEY = 'sign-language-feature-version';
 
 // Singleton model instance
@@ -43,7 +41,7 @@ export function buildModel(numClasses: number, learningRate: number): tf.LayersM
   const model = tf.sequential({
     name: 'sign-language-mlp',
     layers: [
-      // Input layer — accepts 156-dim extended feature vectors
+      // Input layer — accepts hand-only feature vectors
       tf.layers.dense({
         inputShape: [FEATURE_DIM],
         units: 256,
@@ -157,8 +155,8 @@ export async function trainModel(
 }
 
 /**
- * Run inference on a single 63-feature vector.
- * @param features 156-dim extended feature vector (or legacy 63-dim, which will be zero-padded)
+ * Run inference on a single hand feature vector.
+ * @param features 63-dim hand-only vector, or an extended vector whose first 63 values are the hand.
  * @returns { label, confidence, allScores } or null if no model loaded
  */
 export function predict(features: number[]): {
@@ -168,13 +166,9 @@ export function predict(features: number[]): {
 } | null {
   if (!currentModel || currentLabels.length === 0) return null;
 
-  // Ensure the feature vector is 156-dim (zero-pad legacy 63-dim inputs)
-  let paddedFeatures = features;
-  if (features.length === LEGACY_FEATURE_DIM) {
-    paddedFeatures = [...features, ...new Array(FEATURE_DIM - LEGACY_FEATURE_DIM).fill(0)];
-  }
+  const handFeatures = toHandOnlyFeatures(features);
 
-  const input = tf.tensor2d([paddedFeatures]);
+  const input = tf.tensor2d([handFeatures]);
   const output = currentModel.predict(input) as tf.Tensor;
   const scores = Array.from(output.dataSync() as Float32Array);
 
@@ -284,7 +278,7 @@ export async function saveModel(): Promise<void> {
 /**
  * Load a previously saved model from browser localStorage.
  * Returns false (without loading) if the saved model used the legacy
- * 63-dim input — the user must retrain with the new 156-dim features.
+ * previous feature dimension — the user must retrain with hand-only features.
  */
 export async function loadModel(): Promise<boolean> {
   try {
@@ -298,12 +292,34 @@ export async function loadModel(): Promise<boolean> {
     }
 
     const model = await tf.loadLayersModel('localstorage://sign-language-model');
+    const inputShape = model.inputs[0]?.shape ?? [];
+    const savedInputDim = inputShape[inputShape.length - 1];
+    if (typeof savedInputDim === 'number' && savedInputDim !== FEATURE_DIM) {
+      model.dispose();
+      console.warn(
+        `Saved model input uses ${savedInputDim}-dim features; current app expects ${FEATURE_DIM}-dim. Please retrain.`
+      );
+      return false;
+    }
+
     const labelsJson = localStorage.getItem('sign-language-labels');
-    if (!labelsJson) return false;
-    currentModel = model;
+    if (!labelsJson) {
+      model.dispose();
+      return false;
+    }
     const parsed: unknown = JSON.parse(labelsJson);
-    if (!Array.isArray(parsed)) return false;
-    currentLabels = parsed.filter((v): v is string => typeof v === 'string');
+    if (!Array.isArray(parsed)) {
+      model.dispose();
+      return false;
+    }
+    const labels = parsed.filter((v): v is string => typeof v === 'string');
+    if (labels.length === 0) {
+      model.dispose();
+      return false;
+    }
+
+    currentModel = model;
+    currentLabels = labels;
     return true;
   } catch {
     return false;

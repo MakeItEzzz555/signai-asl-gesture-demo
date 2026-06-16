@@ -10,6 +10,8 @@ export interface LanguageDef {
   nativeName: string;
 }
 
+export type CustomTranslations = Record<string, Partial<Record<LanguageCode, string>>>;
+
 export const LANGUAGES: LanguageDef[] = [
   { code: 'en', flagCode: 'gb', nativeName: 'English' },
   { code: 'el', flagCode: 'gr', nativeName: 'Ελληνικά' },
@@ -40,6 +42,10 @@ export const LANGUAGES: LanguageDef[] = [
 ];
 
 type TranslationMap = Record<LanguageCode, string>;
+
+export function normalizeGestureLabel(label: string): string {
+  return label.trim().toLowerCase();
+}
 
 const GESTURE_TRANSLATIONS: Record<string, TranslationMap> = {
   'hello': {
@@ -140,9 +146,17 @@ const GESTURE_TRANSLATIONS: Record<string, TranslationMap> = {
   },
 };
 
-export function translateGesture(label: string, lang: LanguageCode): string {
+export function translateGesture(
+  label: string,
+  lang: LanguageCode,
+  customTranslations?: CustomTranslations,
+): string {
   if (!label) return label;
-  const key = label.trim().toLowerCase();
+  const key = normalizeGestureLabel(label);
+  const customTranslation = customTranslations?.[key]?.[lang]?.trim();
+  if (customTranslation) return customTranslation;
+  const englishCustomTranslation = customTranslations?.[key]?.en?.trim();
+  if (englishCustomTranslation) return englishCustomTranslation;
   const map = GESTURE_TRANSLATIONS[key];
   if (!map) return label;
   return map[lang] ?? label;

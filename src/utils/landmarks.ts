@@ -32,6 +32,13 @@ export const FEATURE_DIM_HAND = 63;       // 21 landmarks × 3
 export const FEATURE_DIM_FACE = 30;       // 10 key landmarks × 3
 export const FEATURE_DIM_EXTENDED = 156;  // right hand + left hand + face
 
+export function toHandOnlyFeatures(features: number[]): number[] {
+  return Array.from({ length: FEATURE_DIM_HAND }, (_, i) => {
+    const value = features[i];
+    return Number.isFinite(value) ? value : 0;
+  });
+}
+
 /**
  * 10 key face mesh landmark indices from MediaPipe's 468-point model.
  *

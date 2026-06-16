@@ -39,7 +39,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-SignAI is a browser-based, 100% client-side ASL (American Sign Language) hackathon demo. The active demo path uses one primary hand for ONNX dynamic gesture inference, plus a deterministic fingertip-to-face-region heuristic for face-touch interactions — no server, no data collection.
+SignAI is a browser-based, 100% client-side ASL (American Sign Language) hackathon demo. The default demo path uses one primary hand for ONNX dynamic gesture inference, plus a deterministic fingertip-to-face-region heuristic for face-touch interactions. Collaborators can also train a browser-local TensorFlow.js model and select Hybrid mode in Recognize — no server, no data collection.
 
 ## Commands
 
@@ -67,7 +67,11 @@ Webcam → MediaPipe Hands (one primary hand, 21 landmarks × 3 = 63 dims)
   → emitted word → Web Speech API (optional TTS)
 ```
 
-The active ML vocabulary is `hello`, `yes`, `no`, `please`, `help`, and `blank`. The rollback ONNX artifact still has a `goodbye` output for compatibility, but `inferenceModel.ts` suppresses it from the demo runtime.
+The default ONNX vocabulary is `hello`, `yes`, `no`, `please`, `help`, and `blank`. The rollback ONNX artifact still has a `goodbye` output for compatibility, but `inferenceModel.ts` suppresses it from the demo runtime.
+
+Recognize also has optional Hybrid mode. Hybrid mode uses the singleton model in `src/ml/model.ts`, expects the current 156-dim MediaPipe feature vector, and applies a simple confidence/stability gate before emitting or speaking custom labels. If TF.js confidence is below the shared threshold, the ONNX sequence pipeline continues as fallback for default gestures. If no custom model is trained or loaded, the UI keeps ONNX mode active and shows a toast.
+
+Custom gesture translations live in `AppContext`, persist to `localStorage` under `signai:customTranslations`, and are included in new dataset exports. Display and speech should resolve labels in this order: custom translation for the selected language, built-in translation, raw label.
 
 Face-touch labels are not trained ONNX classes. `useMediaPipe.ts` keeps FaceMesh active and detects only index/middle fingertip proximity to mouth, eye, nose, forehead, or ear. `RecognizePage.tsx` suppresses hand-only output as soon as raw face contact is detected, then emits one mapped face-region label after a 4-frame same-region confirmation gate.
 
@@ -89,6 +93,8 @@ Controls when a detected gesture is "emitted" as a recognized word. Key paramete
 | `src/App.tsx` | Root component; loads ONNX model on startup, sets up routing (wouter) and context providers |
 | `src/ml/inferenceModel.ts` | ONNX model load + `runSequenceInference()` — primary inference engine |
 | `src/ml/segmentationFSM.ts` | 3-state FSM for gesture segmentation and word emission |
+| `src/ml/model.ts` | Browser-local TensorFlow.js training, save/load, and custom inference |
+| `src/dataset/datasetUtils.ts` | Dataset import/export, custom translation bundle parsing, tensor prep, starter dataset generation |
 | `src/hooks/useMediaPipe.ts` | Webcam access, one-hand MediaPipe Hands init, FaceMesh init, per-frame landmark extraction, 5-frame hold on hand loss, face-touch proximity |
 | `src/hooks/usePredictionSmoothing.ts` | Smooths raw prediction probabilities across frames |
 | `src/pages/RecognizePage.tsx` | Main UI: integrates MediaPipe hook → inference → FSM → state updates → render |
@@ -104,8 +110,9 @@ Controls when a detected gesture is "emitted" as a recognized word. Key paramete
 Wouter (lightweight). Routes: `/`, `/recognize`, `/dataset`, `/train`, `/evaluate`, `/settings`, `/about`.
 
 The sidebar intentionally exposes Dataset, Train, and Evaluate so collaborators
-can record samples and train a browser-local TensorFlow.js model in addition to
-using the checked-in ONNX demo model.
+can record samples, add optional custom translations, merge starter/imported
+datasets, train a browser-local TensorFlow.js model, and use Hybrid mode in
+Recognize alongside the checked-in ONNX demo model.
 
 ### Styling
 

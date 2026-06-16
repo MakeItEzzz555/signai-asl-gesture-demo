@@ -160,6 +160,7 @@ export interface UseMediaPipeOptions {
     handFaceCandidate?: HandFaceInteraction | null,
   ) => void;
   showOverlay?: boolean;
+  enableFaceTracking?: boolean;
 }
 
 interface HandResult {
@@ -224,10 +225,12 @@ export function useMediaPipe(options: UseMediaPipeOptions = {}) {
     setState(prev => ({ ...prev, isLoading: true, error: null }));
 
     try {
-      // ── 1. Dynamically import both MediaPipe modules ──────────────────────
-      const [{ Hands }, { FaceMesh }] = await Promise.all([
+      const enableFaceTracking = options.enableFaceTracking !== false;
+
+      // ── 1. Dynamically import required MediaPipe modules ──────────────────
+      const [{ Hands }, faceModule] = await Promise.all([
         import('@mediapipe/hands'),
-        import('@mediapipe/face_mesh'),
+        enableFaceTracking ? import('@mediapipe/face_mesh') : Promise.resolve(null),
       ]);
 
       // ── 2. Initialize Hands (one primary hand for the demo build) ───────
@@ -259,24 +262,29 @@ export function useMediaPipe(options: UseMediaPipeOptions = {}) {
 
       handsRef.current = hands;
 
-      // ── 3. Initialize FaceMesh ────────────────────────────────────────────
-      const faceMesh = new FaceMesh({
-        locateFile: (file: string) =>
-          `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh@0.4/${file}`,
-      });
-      faceMesh.setOptions({
-        maxNumFaces: 1,
-        refineLandmarks: false,
-        minDetectionConfidence: 0.5,
-        minTrackingConfidence: 0.5,
-      });
+      // ── 3. Initialize FaceMesh only where face-touch recognition is needed ─
+      if (enableFaceTracking && faceModule) {
+        const faceMesh = new faceModule.FaceMesh({
+          locateFile: (file: string) =>
+            `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh@0.4/${file}`,
+        });
+        faceMesh.setOptions({
+          maxNumFaces: 1,
+          refineLandmarks: false,
+          minDetectionConfidence: 0.5,
+          minTrackingConfidence: 0.5,
+        });
 
-      type FaceResults = { multiFaceLandmarks?: Landmark[][] };
-      faceMesh.onResults((results: FaceResults) => {
-        faceResultRef.current = results.multiFaceLandmarks?.[0] ?? null;
-      });
+        type FaceResults = { multiFaceLandmarks?: Landmark[][] };
+        faceMesh.onResults((results: FaceResults) => {
+          faceResultRef.current = results.multiFaceLandmarks?.[0] ?? null;
+        });
 
-      faceMeshRef.current = faceMesh;
+        faceMeshRef.current = faceMesh;
+      } else {
+        faceResultRef.current = null;
+        faceMeshRef.current = null;
+      }
 
       // ── 4. Start webcam ───────────────────────────────────────────────────
       const stream = await navigator.mediaDevices.getUserMedia({
@@ -309,11 +317,14 @@ export function useMediaPipe(options: UseMediaPipeOptions = {}) {
 
           try {
             const handsModel = handsRef.current as { send: (o: { image: HTMLVideoElement }) => Promise<void> };
-            const faceModel  = faceMeshRef.current as { send: (o: { image: HTMLVideoElement }) => Promise<void> };
+            const faceModel = faceMeshRef.current as { send: (o: { image: HTMLVideoElement }) => Promise<void> } | null;
 
-            // Run both models sequentially on the same frame
             await handsModel.send({ image: video });
-            await faceModel.send({ image: video });
+            if (enableFaceTracking && faceModel) {
+              await faceModel.send({ image: video });
+            } else {
+              faceResultRef.current = null;
+            }
 
             // ── Build extended 156-dim features ───────────────────────────
             const { right: rightRaw, left: leftRaw } = handResultRef.current;
@@ -347,7 +358,7 @@ export function useMediaPipe(options: UseMediaPipeOptions = {}) {
             const leftHeld = false;
 
             // Face features
-            const faceFeatures = faceRaw ? normalizeFaceLandmarks(faceRaw) : null;
+            const faceFeatures = enableFaceTracking && faceRaw ? normalizeFaceLandmarks(faceRaw) : null;
 
             // Combine into 156-dim vector
             const extendedFeatures = buildExtendedFeatures(rightFeatures, leftFeatures, faceFeatures);
@@ -356,7 +367,7 @@ export function useMediaPipe(options: UseMediaPipeOptions = {}) {
             const rawInteraction = checkHandFaceInteraction(
               rightPresent ? rightRaw : null,
               null,
-              faceRaw,
+              enableFaceTracking ? faceRaw : null,
             );
             let interaction: HandFaceInteraction | null = null;
 
@@ -383,7 +394,7 @@ export function useMediaPipe(options: UseMediaPipeOptions = {}) {
                 ctx,
                 rightPresent ? rightRaw : null,
                 null,
-                faceRaw,
+                enableFaceTracking ? faceRaw : null,
                 canvasRef.current.width,
                 canvasRef.current.height,
               );
@@ -396,10 +407,10 @@ export function useMediaPipe(options: UseMediaPipeOptions = {}) {
               ...prev,
               rawLandmarks: rightPresent ? rightRaw : null,
               leftRawLandmarks: null,
-              faceLandmarks: faceRaw,
+              faceLandmarks: enableFaceTracking ? faceRaw : null,
               normalizedFeatures: extendedFeatures,
               bothHandsPresent: false,
-              facePresent: faceRaw !== null,
+              facePresent: enableFaceTracking && faceRaw !== null,
               handFaceInteraction: interaction,
             }));
 
@@ -411,7 +422,7 @@ export function useMediaPipe(options: UseMediaPipeOptions = {}) {
                 rightPresent,
                 rightHeld,
                 null,
-                faceRaw,
+                enableFaceTracking ? faceRaw : null,
                 leftHeld,
                 interaction,
                 rawInteraction,
