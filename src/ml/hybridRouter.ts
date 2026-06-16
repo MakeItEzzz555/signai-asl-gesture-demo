@@ -6,6 +6,7 @@ export const CUSTOM_ACTIVATE_CONFIDENCE = 95;
 export const CUSTOM_ACTIVATE_MARGIN = 15;
 export const ONNX_ACTIVATE_CONFIDENCE = 80;
 export const ONNX_BLOCK_CUSTOM_CONFIDENCE = 45;
+export const ONNX_ABSENCE_FRAMES_BEFORE_CUSTOM = 12;
 export const CUSTOM_RELEASE_FRAMES = 10;
 export const ONNX_RELEASE_FRAMES = 8;
 export const SOURCE_SWITCH_COOLDOWN_FRAMES = 6;
@@ -15,6 +16,7 @@ export interface HybridRouterSnapshot {
   activeLabel: string | null;
   activeConfidence: number;
   releaseFrames: number;
+  onnxAbsenceFrames: number;
   sourceSwitchCooldown: number;
   lastSource: HybridSource;
 }
@@ -34,6 +36,7 @@ const INITIAL_SNAPSHOT: HybridRouterSnapshot = {
   activeLabel: null,
   activeConfidence: 0,
   releaseFrames: 0,
+  onnxAbsenceFrames: 0,
   sourceSwitchCooldown: 0,
   lastSource: 'IDLE',
 };
@@ -94,6 +97,7 @@ export class HybridRouter {
         activeLabel: null,
         activeConfidence: 0,
         releaseFrames: 0,
+        onnxAbsenceFrames: 0,
         sourceSwitchCooldown: Math.max(0, this.snapshot.sourceSwitchCooldown - 1),
       };
       return;
@@ -104,15 +108,20 @@ export class HybridRouter {
       activeLabel: null,
       activeConfidence: 0,
       releaseFrames: 0,
+      onnxAbsenceFrames: 0,
       sourceSwitchCooldown: SOURCE_SWITCH_COOLDOWN_FRAMES,
       lastSource: this.snapshot.source,
     };
   }
 
   private stepIdle(input: HybridRouterInput) {
+    const hasOnnxPresence = this.hasOnnxDefaultPresence(input);
+    const onnxAbsenceFrames = hasOnnxPresence ? 0 : this.snapshot.onnxAbsenceFrames + 1;
+
     if (this.snapshot.sourceSwitchCooldown > 0) {
       this.snapshot = {
         ...this.snapshot,
+        onnxAbsenceFrames,
         sourceSwitchCooldown: this.snapshot.sourceSwitchCooldown - 1,
       };
       return;
@@ -124,28 +133,34 @@ export class HybridRouter {
         activeLabel: input.onnxLabel,
         activeConfidence: input.onnxConfidence,
         releaseFrames: 0,
+        onnxAbsenceFrames: 0,
         sourceSwitchCooldown: 0,
         lastSource: 'IDLE',
       };
       return;
     }
 
-    if (this.hasOnnxDefaultPresence(input)) {
+    if (hasOnnxPresence) {
       this.snapshot = {
         ...this.snapshot,
         activeLabel: null,
         activeConfidence: 0,
         releaseFrames: 0,
+        onnxAbsenceFrames: 0,
       };
       return;
     }
 
-    if (this.hasValidCustom(input)) {
+    if (
+      onnxAbsenceFrames >= ONNX_ABSENCE_FRAMES_BEFORE_CUSTOM &&
+      this.hasValidCustom(input)
+    ) {
       this.snapshot = {
         source: 'CUSTOM_ACTIVE',
         activeLabel: input.customLabel,
         activeConfidence: input.customConfidence,
         releaseFrames: 0,
+        onnxAbsenceFrames,
         sourceSwitchCooldown: 0,
         lastSource: 'IDLE',
       };
@@ -157,6 +172,7 @@ export class HybridRouter {
       activeLabel: null,
       activeConfidence: 0,
       releaseFrames: 0,
+      onnxAbsenceFrames,
     };
   }
 
@@ -168,6 +184,7 @@ export class HybridRouter {
         activeLabel: input.onnxLabel ?? this.snapshot.activeLabel,
         activeConfidence: input.onnxLabel ? input.onnxConfidence : this.snapshot.activeConfidence,
         releaseFrames: 0,
+        onnxAbsenceFrames: 0,
       };
       return;
     }
@@ -181,6 +198,7 @@ export class HybridRouter {
     this.snapshot = {
       ...this.snapshot,
       releaseFrames,
+      onnxAbsenceFrames: 0,
     };
   }
 

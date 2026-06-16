@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   CUSTOM_RELEASE_FRAMES,
   HybridRouter,
+  ONNX_ABSENCE_FRAMES_BEFORE_CUSTOM,
   ONNX_BLOCK_CUSTOM_CONFIDENCE,
   ONNX_RELEASE_FRAMES,
   SOURCE_SWITCH_COOLDOWN_FRAMES,
@@ -19,6 +20,12 @@ function frame(partial: Partial<HybridRouterInput> = {}): HybridRouterInput {
     customState: 'IDLE',
     ...partial,
   };
+}
+
+function activateCustom(router: HybridRouter, label = 'custom', confidence = 99) {
+  for (let i = 0; i < ONNX_ABSENCE_FRAMES_BEFORE_CUSTOM; i++) {
+    router.step(frame({ customLabel: label, customConfidence: confidence }));
+  }
 }
 
 describe('HybridRouter', () => {
@@ -61,8 +68,56 @@ describe('HybridRouter', () => {
       customLabel: 'custom',
       customConfidence: 98,
     }));
+    expect(snapshot.source).toBe('IDLE');
+    expect(snapshot.onnxAbsenceFrames).toBe(1);
+  });
+
+  it('activates custom only after the ONNX absence gate', () => {
+    const router = new HybridRouter();
+    let snapshot = router.getSnapshot();
+
+    for (let i = 1; i < ONNX_ABSENCE_FRAMES_BEFORE_CUSTOM; i++) {
+      snapshot = router.step(frame({
+        customLabel: 'custom',
+        customConfidence: 98,
+      }));
+      expect(snapshot.source).toBe('IDLE');
+      expect(snapshot.onnxAbsenceFrames).toBe(i);
+    }
+
+    snapshot = router.step(frame({
+      customLabel: 'custom',
+      customConfidence: 98,
+    }));
     expect(snapshot.source).toBe('CUSTOM_ACTIVE');
     expect(snapshot.activeLabel).toBe('custom');
+  });
+
+  it('resets custom eligibility when weak ONNX default presence returns', () => {
+    const router = new HybridRouter();
+
+    for (let i = 1; i < ONNX_ABSENCE_FRAMES_BEFORE_CUSTOM; i++) {
+      router.step(frame({
+        customLabel: 'custom',
+        customConfidence: 98,
+      }));
+    }
+
+    let snapshot = router.step(frame({
+      onnxLabel: 'hello',
+      onnxConfidence: ONNX_BLOCK_CUSTOM_CONFIDENCE,
+      customLabel: 'custom',
+      customConfidence: 98,
+    }));
+    expect(snapshot.source).toBe('IDLE');
+    expect(snapshot.onnxAbsenceFrames).toBe(0);
+
+    snapshot = router.step(frame({
+      customLabel: 'custom',
+      customConfidence: 98,
+    }));
+    expect(snapshot.source).toBe('IDLE');
+    expect(snapshot.onnxAbsenceFrames).toBe(1);
   });
 
   it('prefers ONNX over custom from idle when ONNX is strongly confident', () => {
@@ -96,7 +151,7 @@ describe('HybridRouter', () => {
   it('keeps custom active through cooldown and ignores ONNX flicker', () => {
     const router = new HybridRouter();
 
-    router.step(frame({ customLabel: 'custom', customConfidence: 99 }));
+    activateCustom(router);
     const snapshot = router.step(frame({
       onnxLabel: 'hello',
       onnxConfidence: 95,
@@ -111,7 +166,7 @@ describe('HybridRouter', () => {
   it('updates the active custom label while custom remains the source owner', () => {
     const router = new HybridRouter();
 
-    router.step(frame({ customLabel: 'first custom', customConfidence: 99 }));
+    activateCustom(router, 'first custom');
     const snapshot = router.step(frame({ customLabel: 'second custom', customConfidence: 98 }));
 
     expect(snapshot.source).toBe('CUSTOM_ACTIVE');
@@ -122,7 +177,7 @@ describe('HybridRouter', () => {
   it('releases custom only after the configured invalid-frame window', () => {
     const router = new HybridRouter();
 
-    router.step(frame({ customLabel: 'custom', customConfidence: 99 }));
+    activateCustom(router);
 
     for (let i = 1; i < CUSTOM_RELEASE_FRAMES; i++) {
       const snapshot = router.step(frame());
@@ -155,7 +210,7 @@ describe('HybridRouter', () => {
   it('requires source switch cooldown after returning to idle', () => {
     const router = new HybridRouter();
 
-    router.step(frame({ customLabel: 'custom', customConfidence: 99 }));
+    activateCustom(router);
     let snapshot = router.step(frame({ handPresent: false }));
     expect(snapshot.source).toBe('IDLE');
     expect(snapshot.sourceSwitchCooldown).toBe(SOURCE_SWITCH_COOLDOWN_FRAMES);
