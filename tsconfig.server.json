@@ -1,0 +1,9 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "lib": ["ES2022", "DOM"],
+    "types": ["node", "vite/client"],
+    "noEmit": true
+  },
+  "include": ["api/**/*.ts", "server/**/*.ts", "shared/**/*.ts", "vite.config.ts", "vitest.config.ts", "playwright.config.ts"]
+}
