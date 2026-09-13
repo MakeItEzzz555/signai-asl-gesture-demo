@@ -2,12 +2,12 @@ import { Link, useLocation } from 'wouter';
 import { useState, useEffect, useRef } from 'react';
 import {
   Home, Camera, Info, Settings, Database, Brain, BarChart3,
-  ChevronLeft, Sun, Moon, Contrast,
+  ChevronLeft, Sun, Moon, Contrast, Menu, X,
   Type, Volume2, VolumeX
 } from 'lucide-react';
 import { useApp } from '../contexts/AppContext';
 import { useTheme } from '../contexts/ThemeContext';
-import { cn } from '@/lib/utils';
+import { cn } from '../lib/utils';
 
 const NAV_ITEMS = [
   { path: '/', icon: Home, label: 'Home', description: 'Overview' },
@@ -26,11 +26,65 @@ interface LayoutProps {
 export default function Layout({ children }: LayoutProps) {
   const [location] = useLocation();
   const [expanded, setExpanded] = useState(true);
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const [isDesktop, setIsDesktop] = useState(() => window.matchMedia('(min-width: 768px)').matches);
   const { accessibility, setAccessibility, modelReady, modelLoading } = useApp();
   const { theme, toggleTheme } = useTheme();
 
   const mainRef = useRef<HTMLElement>(null);
   const scrollProgressRef = useRef<HTMLDivElement>(null);
+  const drawerRef = useRef<HTMLElement>(null);
+  const menuButtonRef = useRef<HTMLButtonElement>(null);
+  const drawerCloseButtonRef = useRef<HTMLButtonElement>(null);
+
+  const closeDrawer = () => {
+    setDrawerOpen(false);
+    menuButtonRef.current?.focus();
+  };
+
+  useEffect(() => {
+    const media = window.matchMedia('(min-width: 768px)');
+    const update = () => setIsDesktop(media.matches);
+    update();
+    media.addEventListener('change', update);
+    return () => media.removeEventListener('change', update);
+  }, []);
+
+  useEffect(() => {
+    if (!drawerOpen || isDesktop) return;
+    setDrawerOpen(false);
+    requestAnimationFrame(() => mainRef.current?.focus());
+  }, [location]);
+
+  useEffect(() => {
+    if (!drawerOpen || isDesktop) return;
+    const previous = document.activeElement as HTMLElement | null;
+    drawerCloseButtonRef.current?.focus();
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        closeDrawer();
+        return;
+      }
+      if (event.key !== 'Tab' || !drawerRef.current) return;
+      const focusable = [...drawerRef.current.querySelectorAll<HTMLElement>('a[href], button:not(:disabled)')];
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last?.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first?.focus();
+      }
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('keydown', onKeyDown);
+      previous?.focus();
+    };
+  }, [drawerOpen, isDesktop]);
+
+  const drawerIsVisible = isDesktop || drawerOpen;
 
   // Scroll progress bar — scaleX transform (GPU composited)
   useEffect(() => {
@@ -58,17 +112,46 @@ export default function Layout({ children }: LayoutProps) {
 
   return (
     <div className={cn(
-      "h-screen overflow-hidden flex bg-background text-foreground",
+      "min-h-[100dvh] h-screen overflow-hidden flex bg-background text-foreground",
       "transition-colors duration-300"
     )}>
       {/* Scroll progress bar */}
       <div ref={scrollProgressRef} className="scroll-progress" />
 
+      <button
+        ref={menuButtonRef}
+        type="button"
+        className="fixed left-3 top-3 z-30 rounded-lg border border-border bg-card p-2 text-foreground shadow md:hidden"
+        aria-label="Open navigation"
+        aria-expanded={drawerOpen}
+        aria-controls="primary-navigation"
+        onClick={() => setDrawerOpen(true)}
+      >
+        <Menu className="h-5 w-5" />
+      </button>
+
+      {drawerOpen && (
+        <button
+          type="button"
+          className="fixed inset-0 z-30 bg-black/60 md:hidden"
+          aria-label="Close navigation overlay"
+          onClick={closeDrawer}
+        />
+      )}
+
       {/* Sidebar */}
-      <aside className={cn(
-        "border-r border-border flex flex-col transition-all duration-300 sidebar-depth relative overflow-hidden",
-        expanded ? "w-56" : "w-20"
-      )}>
+      <aside
+        ref={drawerRef}
+        id="primary-navigation"
+        aria-label="Primary navigation"
+        aria-hidden={!drawerIsVisible || undefined}
+        inert={!drawerIsVisible}
+        className={cn(
+          "fixed inset-y-0 left-0 z-40 flex w-64 flex-col overflow-hidden border-r border-border bg-background transition-transform duration-300 sidebar-depth md:relative md:z-auto md:translate-x-0",
+          drawerOpen ? "translate-x-0" : "-translate-x-full",
+          expanded ? "md:w-56" : "md:w-20"
+        )}
+      >
 
         {/* Ambient particles */}
         <div className="particle" style={{ bottom: '8%',  left: '15%', width: '4px', height: '4px', '--float-delay': '0s',   '--float-duration': '6s'   } as React.CSSProperties} />
@@ -93,8 +176,11 @@ export default function Layout({ children }: LayoutProps) {
             </div>
           )}
           <button
+            type="button"
             onClick={() => setExpanded(!expanded)}
-            className="p-1.5 hover:bg-muted rounded-lg transition-colors"
+            className="hidden p-1.5 hover:bg-muted rounded-lg transition-colors md:block"
+            aria-label={expanded ? 'Collapse navigation' : 'Expand navigation'}
+            aria-expanded={expanded}
           >
             <ChevronLeft className={cn(
               'w-4 h-4 transition-transform duration-300',
@@ -104,25 +190,29 @@ export default function Layout({ children }: LayoutProps) {
         </div>
 
         {/* Navigation */}
-        <nav className="flex-1 p-3 space-y-2 relative z-10">
+        <nav className="flex-1 overflow-y-auto p-3 space-y-2 relative z-10">
           {NAV_ITEMS.map(({ path, icon: Icon, label, description }) => {
             const isActive = location === path;
             return (
-              <Link key={path} href={path}>
-                <button className={cn(
+              <Link
+                key={path}
+                href={path}
+                aria-current={isActive ? 'page' : undefined}
+                title={!expanded ? label : undefined}
+                className={cn(
                   "nav-item w-full flex items-center gap-3 px-3 py-2.5 rounded-lg transition-all text-sm font-medium",
                   isActive
                     ? "nav-active bg-primary/25 text-primary border border-primary/50 shadow-[0_0_24px_rgba(0,217,255,0.28),inset_0_0_14px_rgba(0,217,255,0.08)]"
                     : "text-muted-foreground hover:text-foreground hover:bg-muted/80 hover:border-primary/20 border border-transparent"
-                )}>
+                )}
+              >
                   <Icon className="w-4 h-4 flex-shrink-0" />
-                  {expanded && (
+                  {(expanded || drawerOpen) && (
                     <div className="flex-1 text-left">
                       <p className="text-xs font-semibold">{label}</p>
                       <p className="text-[10px] text-muted-foreground">{description}</p>
                     </div>
                   )}
-                </button>
               </Link>
             );
           })}
@@ -131,15 +221,18 @@ export default function Layout({ children }: LayoutProps) {
         {/* Accessibility Controls */}
         <div className="border-t border-border p-3 space-y-2 relative z-10">
           <button
+            type="button"
             onClick={toggleTheme}
             className="w-full flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-muted transition-colors text-sm"
             title="Toggle theme"
+            aria-label={`Use ${theme === 'dark' ? 'light' : 'dark'} theme`}
           >
             {theme === 'dark' ? <Moon className="w-4 h-4" /> : <Sun className="w-4 h-4" />}
             {expanded && <span className="text-xs text-muted-foreground">{theme === 'dark' ? 'Dark' : 'Light'}</span>}
           </button>
 
           <button
+            type="button"
             onClick={() => setAccessibility({ highContrast: !accessibility.highContrast })}
             className={cn(
               "w-full flex items-center gap-3 px-3 py-2 rounded-lg transition-colors text-sm",
@@ -148,12 +241,15 @@ export default function Layout({ children }: LayoutProps) {
                 : "hover:bg-muted text-muted-foreground"
             )}
             title="High contrast mode"
+            aria-label="High contrast mode"
+            aria-pressed={accessibility.highContrast}
           >
             <Contrast className="w-4 h-4" />
             {expanded && <span className="text-xs">{accessibility.highContrast ? 'HC ON' : 'HC OFF'}</span>}
           </button>
 
           <button
+            type="button"
             onClick={() => {
               const sizes: ('normal' | 'large' | 'xl')[] = ['normal', 'large', 'xl'];
               const current = sizes.indexOf(accessibility.textSize);
@@ -161,12 +257,14 @@ export default function Layout({ children }: LayoutProps) {
             }}
             className="w-full flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-muted transition-colors text-sm"
             title="Adjust text size"
+            aria-label={`Text size: ${accessibility.textSize}. Activate to use the next size.`}
           >
             <Type className="w-4 h-4" />
             {expanded && <span className="text-xs text-muted-foreground">{accessibility.textSize}</span>}
           </button>
 
           <button
+            type="button"
             onClick={() => setAccessibility({ audioEnabled: !accessibility.audioEnabled })}
             className={cn(
               "w-full flex items-center gap-3 px-3 py-2 rounded-lg transition-colors text-sm",
@@ -175,6 +273,8 @@ export default function Layout({ children }: LayoutProps) {
                 : "bg-destructive/15 text-destructive"
             )}
             title="Toggle audio"
+            aria-label="Audio output"
+            aria-pressed={accessibility.audioEnabled}
           >
             {accessibility.audioEnabled ? <Volume2 className="w-4 h-4" /> : <VolumeX className="w-4 h-4" />}
             {expanded && <span className="text-xs">{accessibility.audioEnabled ? 'Audio ON' : 'Audio OFF'}</span>}
@@ -205,19 +305,29 @@ export default function Layout({ children }: LayoutProps) {
             </p>
           )}
         </div>
+        <button
+          ref={drawerCloseButtonRef}
+          type="button"
+          className="absolute right-3 top-3 rounded-lg p-2 text-muted-foreground hover:bg-muted hover:text-foreground md:hidden"
+          aria-label="Close navigation"
+          onClick={closeDrawer}
+        >
+          <X className="h-5 w-5" />
+        </button>
       </aside>
 
       {/* Main Content */}
       <main
         ref={mainRef}
-        className="flex-1 overflow-y-auto overflow-x-hidden"
+        tabIndex={-1}
+        className="flex-1 overflow-y-auto overflow-x-hidden pt-14 md:pt-0"
         style={{
           WebkitOverflowScrolling: 'touch',
           overscrollBehavior: 'contain',
           transform: 'translateZ(0)',
         } as React.CSSProperties}
       >
-        <div className="page-enter w-full p-6 lg:p-8 xl:p-10 2xl:p-12">
+        <div className="page-enter w-full p-4 sm:p-6 lg:p-8 xl:p-10 2xl:p-12">
           {children}
         </div>
       </main>

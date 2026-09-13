@@ -4,6 +4,7 @@
  * Providers: AppContext, ThemeProvider, TooltipProvider
  */
 
+import { useEffect, lazy, Suspense } from "react";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { Route, Switch } from "wouter";
@@ -12,14 +13,13 @@ import { ThemeProvider } from "./contexts/ThemeContext";
 import { AppProvider, useApp } from "./contexts/AppContext";
 import Layout from "./components/Layout";
 import Home from "./pages/Home";
-import RecognizePage from "./pages/RecognizePage";
-import AboutPage from "./pages/AboutPage";
-import DatasetPage from "./pages/DatasetPage";
-import TrainPage from "./pages/TrainPage";
-import EvaluatePage from "./pages/EvaluatePage";
-import SettingsPage from "./pages/SettingsPage";
+const RecognizePage = lazy(() => import("./pages/RecognizePage"));
+const AboutPage = lazy(() => import("./pages/AboutPage"));
+const DatasetPage = lazy(() => import("./pages/DatasetPage"));
+const TrainPage = lazy(() => import("./pages/TrainPage"));
+const EvaluatePage = lazy(() => import("./pages/EvaluatePage"));
+const SettingsPage = lazy(() => import("./pages/SettingsPage"));
 import NotFound from "./pages/NotFound";
-import { useEffect } from "react";
 import { loadModel, getLoadingState } from "./ml/inferenceModel";
 
 /**
@@ -52,6 +52,7 @@ function ModelLoader() {
 function Router() {
   return (
     <Layout>
+      <Suspense fallback={<p role="status" className="p-6 text-muted-foreground">Loading page…</p>}>
       <Switch>
         <Route path="/" component={Home} />
         <Route path="/recognize" component={RecognizePage} />
@@ -62,6 +63,7 @@ function Router() {
         <Route path="/about" component={AboutPage} />
         <Route component={NotFound} />
       </Switch>
+      </Suspense>
     </Layout>
   );
 }

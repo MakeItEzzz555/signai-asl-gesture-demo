@@ -73,7 +73,7 @@
 
 import { TtsSession, type VoiceId, type Progress } from '@mintplex-labs/piper-tts-web';
 import { toast } from 'sonner';
-import { LANGUAGES } from '@/i18n/translations';
+import { LANGUAGES } from '../i18n/translations';
 
 // ─── Voice map (ISO 639-1 → Piper voiceId) ───────────────────────────────────
 // Languages absent from this object fall through to eSpeak (or onMissing).
@@ -115,11 +115,25 @@ let activeSession: TtsSession | null = null;
 // ISO 639-1 code of the language whose model is currently loaded.
 let activeLangCode: string | null = null;
 
-// In-flight TtsSession.create() — at most one at a time to avoid concurrent
-// calls on the library's singleton.  Always runs to completion (OPFS cache).
-let pendingInit: { lang: string; promise: Promise<TtsSession> } | null = null;
+// Initialization, prediction and playback share one queue. The library uses a
+// mutable singleton, so a language switch must not reset it during synthesis.
+let piperWorkQueue: Promise<void> = Promise.resolve();
 
-let activeSource: AudioBufferSourceNode | null = null;
+interface PiperPlayback {
+  source: AudioBufferSourceNode;
+  resolve: () => void;
+  settled: boolean;
+}
+
+interface PiperRequest {
+  generation: number;
+  settled: boolean;
+  resolve: () => void;
+  reject: (error: Error) => void;
+}
+
+let activePlayback: PiperPlayback | null = null;
+let activeRequest: PiperRequest | null = null;
 let audioCtx: AudioContext | null = null;
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -169,12 +183,30 @@ export function piperVoiceReady(langCode: string): boolean {
  * This does NOT interrupt an in-progress model download — the pendingInit
  * Promise always runs to completion so the result is cached in OPFS.
  */
+function cancelPlayback(): void {
+  const playback = activePlayback;
+  if (!playback) return;
+  activePlayback = null;
+  try { playback.source.stop(); }       catch { /* already stopped */ }
+  try { playback.source.disconnect(); } catch { /* already disconnected */ }
+  if (!playback.settled) {
+    playback.settled = true;
+    playback.resolve();
+  }
+}
+
+function settleRequest(request: PiperRequest, error?: unknown): void {
+  if (request.settled) return;
+  request.settled = true;
+  if (activeRequest === request) activeRequest = null;
+  if (error) request.reject(error instanceof Error ? error : new Error(String(error)));
+  else request.resolve();
+}
+
 export function stopPiper(): void {
   piperGeneration++;
-  if (!activeSource) return;
-  try { activeSource.stop(); }       catch { /* already stopped */ }
-  try { activeSource.disconnect(); } catch { /* already disconnected */ }
-  activeSource = null;
+  cancelPlayback();
+  if (activeRequest) settleRequest(activeRequest);
 }
 
 // ─── Public — pre-warming ─────────────────────────────────────────────────────
@@ -190,10 +222,18 @@ export function stopPiper(): void {
 export async function preWarmPiper(langCode: string): Promise<void> {
   if (!piperHasVoice(langCode)) return;
   try {
-    await getSession(langCode);
+    await enqueuePiperWork(async () => {
+      await getSession(langCode);
+    });
   } catch (err) {
     console.error(`[Piper] preWarm "${langCode}" failed:`, err instanceof Error ? err.message : err);
   }
+}
+
+function enqueuePiperWork<T>(work: () => Promise<T>): Promise<T> {
+  const result = piperWorkQueue.then(work, work);
+  piperWorkQueue = result.then(() => undefined, () => undefined);
+  return result;
 }
 
 // ─── Private — session management ────────────────────────────────────────────
@@ -215,66 +255,40 @@ async function getSession(langCode: string): Promise<TtsSession> {
   // Already the active model?
   if (activeLangCode === langCode && activeSession) return activeSession;
 
-  // Already loading for this exact language?
-  if (pendingInit?.lang === langCode) return pendingInit.promise;
-
-  // Serialize: wait for any in-flight init to complete before resetting the
-  // library singleton. The completing init caches its model in OPFS even if
-  // it's for a different language — nothing is wasted.
-  if (pendingInit) {
-    try { await pendingInit.promise; } catch { /* ignore; errors handled below */ }
-    // Re-check after the await — a concurrent caller might have loaded our lang.
-    if (activeLangCode === langCode && activeSession) return activeSession;
-    if (pendingInit?.lang === langCode) return pendingInit.promise;
-  }
-
   // Reset the library's internal singleton so TtsSession.create() runs a
   // fresh init(): loads the correct ONNX model + espeak phoneme language
   // for `voiceId` instead of reusing the previously-active language's model.
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  (TtsSession as any)._instance = null;
+  const resettableSession = TtsSession as typeof TtsSession & { _instance: TtsSession | null };
+  resettableSession._instance = null;
   activeSession = null;
-  activeLangCode = langCode;
+  activeLangCode = null;
 
   const name  = nativeName(langCode);
   const label = sizeHint(voiceId);
   let   downloading = false;
 
-  const promise = TtsSession.create({
-    voiceId,
-    progress(p: Progress) {
-      const pct = p.total > 0 ? Math.round((p.loaded / p.total) * 100) : 0;
-      const msg = downloading
-        ? `Downloading ${name} voice… ${pct}%`
-        : `Downloading ${name} voice… ${label}`;
-      downloading = true;
-      toast.loading(msg, { id: `piper-dl-${langCode}`, duration: Infinity });
-    },
-  })
-    .then(session => {
-      // Only install if we're still the pending init (language hasn't changed).
-      if (pendingInit?.lang === langCode) {
-        activeSession = session;
-        pendingInit = null;
-      }
-      if (downloading) toast.dismiss(`piper-dl-${langCode}`);
-      console.log(
-        `[Piper] ${langCode} → ${voiceId} session ready` +
-        ` (espeak phonemizer: ${voiceId.split('-')[0]})`,
-      );
-      return session;
-    })
-    .catch(err => {
-      if (pendingInit?.lang === langCode) {
-        pendingInit = null;
-        activeSession = null;
-      }
-      if (downloading) toast.dismiss(`piper-dl-${langCode}`);
-      throw err;
+  try {
+    const session = await TtsSession.create({
+      voiceId,
+      progress(p: Progress) {
+        const pct = p.total > 0 ? Math.round((p.loaded / p.total) * 100) : 0;
+        const msg = downloading
+          ? `Downloading ${name} voice… ${pct}%`
+          : `Downloading ${name} voice… ${label}`;
+        downloading = true;
+        toast.loading(msg, { id: `piper-dl-${langCode}`, duration: Infinity });
+      },
     });
-
-  pendingInit = { lang: langCode, promise };
-  return promise;
+    activeSession = session;
+    activeLangCode = langCode;
+    console.log(
+      `[Piper] ${langCode} → ${voiceId} session ready` +
+      ` (espeak phonemizer: ${voiceId.split('-')[0]})`,
+    );
+    return session;
+  } finally {
+    if (downloading) toast.dismiss(`piper-dl-${langCode}`);
+  }
 }
 
 // ─── Public — synthesis ───────────────────────────────────────────────────────
@@ -295,50 +309,57 @@ export async function speakWithPiper(
   langCode: string,
   opts?: { rate?: number },
 ): Promise<void> {
-  // Tag this synthesis call.  If generation changes before we start audio,
-  // the post-session work is silently abandoned (but the session itself is
-  // not affected — it stays active for the next call).
   const gen = ++piperGeneration;
+  cancelPlayback();
+  if (activeRequest) settleRequest(activeRequest);
 
-  // getSession serializes language switches and resets the library singleton
-  // so the correct model + phonemizer is loaded.  Always runs to completion.
-  const session = await getSession(langCode);
-
-  // From here on: bail if superseded.
-  if (piperGeneration !== gen) return;
-
-  const blob = await session.predict(text);
-  if (piperGeneration !== gen) return;
-
-  const arrayBuffer = await blob.arrayBuffer();
-  if (piperGeneration !== gen) return;
-
-  const ctx = getAudioCtx();
-  const audioBuffer = await ctx.decodeAudioData(arrayBuffer);
-  if (piperGeneration !== gen) return;
-
-  // Stop any audio that arrived between our last check and now.
-  // (Synchronous from here — no more awaits before src.start().)
-  if (activeSource) {
-    try { activeSource.stop(); }       catch { /* already stopped */ }
-    try { activeSource.disconnect(); } catch { /* already disconnected */ }
-    activeSource = null;
-  }
-
-  return new Promise<void>(resolve => {
-    const src = ctx.createBufferSource();
-    src.buffer = audioBuffer;
-    src.playbackRate.value = opts?.rate ?? 0.9;
-    src.connect(ctx.destination);
-    src.onended = () => {
-      if (activeSource === src) activeSource = null;
-      resolve();
+  return new Promise<void>((resolve, reject) => {
+    const request: PiperRequest = {
+      generation: gen,
+      settled: false,
+      resolve,
+      reject,
     };
-    activeSource = src;
-    src.start();
-    console.log(
-      `[Piper] speaking ${langCode} → ${PIPER_VOICE_MAP[langCode]}, ` +
-      `${audioBuffer.duration.toFixed(2)}s`,
+    activeRequest = request;
+
+    void enqueuePiperWork(async () => {
+      if (piperGeneration !== gen) return;
+      const session = await getSession(langCode);
+      if (piperGeneration !== gen) return;
+
+      const blob = await session.predict(text);
+      if (piperGeneration !== gen) return;
+
+      const arrayBuffer = await blob.arrayBuffer();
+      if (piperGeneration !== gen) return;
+
+      const ctx = getAudioCtx();
+      const audioBuffer = await ctx.decodeAudioData(arrayBuffer);
+      if (piperGeneration !== gen) return;
+
+      await new Promise<void>(playbackResolve => {
+        const source = ctx.createBufferSource();
+        source.buffer = audioBuffer;
+        source.playbackRate.value = opts?.rate ?? 0.9;
+        source.connect(ctx.destination);
+        const playback: PiperPlayback = { source, resolve: playbackResolve, settled: false };
+        activePlayback = playback;
+        source.onended = () => {
+          if (activePlayback === playback) activePlayback = null;
+          if (!playback.settled) {
+            playback.settled = true;
+            playbackResolve();
+          }
+        };
+        source.start();
+        console.log(
+          `[Piper] speaking ${langCode} → ${PIPER_VOICE_MAP[langCode]}, ` +
+          `${audioBuffer.duration.toFixed(2)}s`,
+        );
+      });
+    }).then(
+      () => settleRequest(request),
+      error => settleRequest(request, error),
     );
   });
 }

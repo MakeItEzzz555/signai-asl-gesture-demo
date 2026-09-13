@@ -8,29 +8,22 @@
  * - Post-training evaluation trigger
  */
 
-import { useState, useCallback, useMemo, useRef } from 'react';
+import { useMemo, useSyncExternalStore } from 'react';
 import { Brain, Play, Save, Upload, AlertCircle, CheckCircle, Settings2 } from 'lucide-react';
 import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer } from 'recharts';
 import { useApp } from '../contexts/AppContext';
-import { isFaceInteractiveGesture, prepareTensors } from '../dataset/datasetUtils';
-import { trainModel, saveModel, loadModel, computeMetrics } from '../ml/model';
+import { isFaceInteractiveGesture } from '../dataset/datasetUtils';
+import { startTraining, cancelTraining, saveModel, loadModel, subscribeModel, getModelSnapshot } from '../ml/model';
 import type { TrainingLog } from '../contexts/AppContext';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
 
 export default function TrainPage() {
-  const {
-    dataset, trainingConfig, setTrainingConfig,
-    trainingLogs, setTrainingLogs,
-    isModelTrained, setIsModelTrained,
-    setEvaluationMetrics,
-  } = useApp();
-
-  const [isTraining, setIsTraining] = useState(false);
-  const [progress, setProgress] = useState(0);
-  const [currentEpoch, setCurrentEpoch] = useState(0);
-  const [latestLog, setLatestLog] = useState<TrainingLog | null>(null);
-  const abortRef = useRef(false);
+  const { dataset, datasetRevision, datasetStorageStatus, trainingConfig, setTrainingConfig } = useApp();
+  const modelState = useSyncExternalStore(subscribeModel, getModelSnapshot);
+  const { logs: trainingLogs, progress, ready: isModelTrained, busy: isTraining } = modelState;
+  const currentEpoch = trainingLogs.at(-1)?.epoch ?? 0;
+  const latestLog = trainingLogs.at(-1) ?? null;
 
   const trainableSamples = useMemo(
     () => dataset.samples.filter(sample => !isFaceInteractiveGesture(sample.label)),
@@ -40,72 +33,26 @@ export default function TrainPage() {
     () => Array.from(new Set(trainableSamples.map(sample => sample.label))),
     [trainableSamples],
   );
-  const canTrain = trainableSamples.length >= 10 && trainableLabels.length >= 2;
+  const canTrain = datasetStorageStatus !== 'loading' && trainableSamples.length >= 10 && trainableLabels.length >= 2 &&
+    trainableLabels.every(label => trainableSamples.filter(sample => sample.label === label).length >= 2);
 
-  const handleTrain = useCallback(async () => {
-    if (!canTrain) {
-      toast.error('Need at least 10 samples across 2+ gesture classes');
-      return;
-    }
-
-    setIsTraining(true);
-    setTrainingLogs([]);
-    setProgress(0);
-    setCurrentEpoch(0);
-    abortRef.current = false;
-
+  const handleTrain = async () => {
     try {
-      const { features, labels, labelIndices } = prepareTensors(trainableSamples, trainableLabels);
-      const logs: TrainingLog[] = [];
-
-      const model = await trainModel(
-        features,
-        labels,
-        trainingConfig,
-        trainableLabels,
-        (log) => {
-          logs.push(log);
-          setTrainingLogs([...logs]);
-          setLatestLog(log);
-          setCurrentEpoch(log.epoch);
-        },
-        (pct) => setProgress(pct)
-      );
-
-      // Compute evaluation metrics on full dataset
-      const metrics = computeMetrics(features, labelIndices, trainableLabels);
-      setEvaluationMetrics(metrics);
-      setIsModelTrained(true);
-
-      toast.success(`Training complete! Accuracy: ${(metrics.accuracy * 100).toFixed(1)}%`);
-    } catch (err: unknown) {
-      toast.error(`Training failed: ${err instanceof Error ? err.message : 'Unknown error'}`);
-    } finally {
-      setIsTraining(false);
-    }
-  }, [canTrain, trainableSamples, trainableLabels, trainingConfig, setTrainingLogs, setEvaluationMetrics, setIsModelTrained]);
-
-  const handleSave = async () => {
-    try {
-      await saveModel();
-      toast.success('Model saved to browser storage');
-    } catch {
-      toast.error('Failed to save model');
+      await startTraining(trainableSamples, trainingConfig, datasetRevision);
+      toast.success('Training complete. See validation holdout results in Evaluate.');
+    } catch (error) {
+      if (error instanceof Error && error.name === 'AbortError') toast.info('Training cancelled');
+      else toast.error(error instanceof Error ? error.message : 'Training failed');
     }
   };
-
+  const handleSave = async () => {
+    try { await saveModel(); toast.success('Model saved to browser storage'); }
+    catch (error) { toast.error(error instanceof Error ? error.message : 'Failed to save model'); }
+  };
   const handleLoad = async () => {
-    try {
-      const ok = await loadModel();
-      if (ok) {
-        setIsModelTrained(true);
-        toast.success('Model loaded from browser storage');
-      } else {
-        toast.error('No saved model found');
-      }
-    } catch {
-      toast.error('Failed to load model');
-    }
+    const ok = await loadModel();
+    if (ok) toast.success('Model loaded from browser storage');
+    else toast.error(getModelSnapshot().error ?? 'A model operation is running or no compatible saved model was found');
   };
 
   const lastLog = trainingLogs[trainingLogs.length - 1];
@@ -121,7 +68,10 @@ export default function TrainPage() {
         </p>
       </div>
 
-      <div className="grid grid-cols-3 gap-6">
+      {modelState.error && <p role="alert" className="text-sm text-destructive">{modelState.error}</p>}
+      {modelState.status === 'running' && <button onClick={cancelTraining} className="px-4 py-2 rounded-lg bg-muted">Cancel Training</button>}
+      <p className="text-xs text-muted-foreground">Training continues when you change pages. Dataset changes cancel the current job. Validation is a sample-level holdout; synthetic starter results do not measure real signing accuracy.</p>
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* ── Left: Config + Controls ──────────────────────────────── */}
         <div className="space-y-4">
           {/* Dataset status */}
@@ -151,7 +101,7 @@ export default function TrainPage() {
               <div className="mt-3 flex items-start gap-2 p-2 rounded-lg bg-warning/10 border border-warning/20">
                 <AlertCircle className="w-3.5 h-3.5 text-warning mt-0.5 flex-shrink-0" />
                 <p className="text-[10px] text-warning">
-                  Need at least 10 samples and 2 gesture classes to train.
+                  Need at least 10 samples, 2 classes, and 2 samples per class for a validation holdout.
                 </p>
               </div>
             )}
@@ -171,7 +121,7 @@ export default function TrainPage() {
                   Epochs: <span className="text-foreground font-mono">{trainingConfig.epochs}</span>
                 </label>
                 <input
-                  type="range" min={5} max={200} step={5}
+                  aria-label="Epochs" type="range" min={5} max={200} step={5}
                   value={trainingConfig.epochs}
                   onChange={e => setTrainingConfig({ epochs: Number(e.target.value) })}
                   disabled={isTraining}
@@ -183,7 +133,7 @@ export default function TrainPage() {
                   Batch Size: <span className="text-foreground font-mono">{trainingConfig.batchSize}</span>
                 </label>
                 <input
-                  type="range" min={8} max={128} step={8}
+                  aria-label="Batch size" type="range" min={8} max={128} step={8}
                   value={trainingConfig.batchSize}
                   onChange={e => setTrainingConfig({ batchSize: Number(e.target.value) })}
                   disabled={isTraining}
@@ -194,7 +144,7 @@ export default function TrainPage() {
                 <label className="text-xs text-muted-foreground block mb-1">
                   Learning Rate: <span className="text-foreground font-mono">{trainingConfig.learningRate}</span>
                 </label>
-                <select
+                <select aria-label="Learning rate"
                   value={trainingConfig.learningRate}
                   onChange={e => setTrainingConfig({ learningRate: Number(e.target.value) })}
                   disabled={isTraining}
@@ -211,7 +161,7 @@ export default function TrainPage() {
                   Validation Split: <span className="text-foreground font-mono">{Math.round(trainingConfig.validationSplit * 100)}%</span>
                 </label>
                 <input
-                  type="range" min={0.1} max={0.4} step={0.05}
+                  aria-label="Validation split" type="range" min={0.1} max={0.4} step={0.05}
                   value={trainingConfig.validationSplit}
                   onChange={e => setTrainingConfig({ validationSplit: Number(e.target.value) })}
                   disabled={isTraining}
@@ -252,7 +202,7 @@ export default function TrainPage() {
             <div className="grid grid-cols-2 gap-2">
               <button
                 onClick={handleSave}
-                disabled={!isModelTrained}
+                disabled={!isModelTrained || isTraining}
                 className="flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg bg-muted text-foreground border border-border text-xs font-medium hover:bg-accent transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
                 <Save className="w-3.5 h-3.5" />
@@ -260,6 +210,7 @@ export default function TrainPage() {
               </button>
               <button
                 onClick={handleLoad}
+                  disabled={isTraining}
                 className="flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg bg-muted text-foreground border border-border text-xs font-medium hover:bg-accent transition-colors"
               >
                 <Upload className="w-3.5 h-3.5" />
@@ -270,7 +221,7 @@ export default function TrainPage() {
         </div>
 
         {/* ── Right: Charts + Metrics ──────────────────────────────── */}
-        <div className="col-span-2 space-y-4">
+        <div className="lg:col-span-2 min-w-0 space-y-4">
           {/* Progress bar */}
           {isTraining && (
             <div className="bg-card border border-border rounded-xl p-4">
@@ -287,7 +238,7 @@ export default function TrainPage() {
                 />
               </div>
               {latestLog && (
-                <div className="grid grid-cols-4 gap-3 mt-3">
+                <div className="grid grid-cols-2 xl:grid-cols-4 gap-3 mt-3">
                   {[
                     { label: 'Loss', value: latestLog.loss },
                     { label: 'Accuracy', value: `${(latestLog.accuracy * 100).toFixed(1)}%` },
@@ -371,7 +322,7 @@ export default function TrainPage() {
           </div>
 
           {/* Final metrics summary */}
-          {isModelTrained && lastLog && (
+          {modelState.status === 'completed' && lastLog && (
             <div className="bg-card border border-primary/20 rounded-xl p-4">
               <div className="flex items-center gap-2 mb-3">
                 <CheckCircle className="w-4 h-4 text-success" />
@@ -379,16 +330,16 @@ export default function TrainPage() {
                   Training Complete
                 </h3>
               </div>
-              <div className="grid grid-cols-4 gap-3">
+              <div className="grid grid-cols-2 xl:grid-cols-4 gap-3">
                 {[
-                  { label: 'Final Loss', value: lastLog.loss },
+                  { label: 'Final Loss', value: lastLog.loss.toFixed(4) },
                   { label: 'Train Accuracy', value: `${(lastLog.accuracy * 100).toFixed(1)}%` },
-                  { label: 'Val Loss', value: lastLog.valLoss },
+                  { label: 'Val Loss', value: lastLog.valLoss.toFixed(4) },
                   { label: 'Val Accuracy', value: `${(lastLog.valAccuracy * 100).toFixed(1)}%` },
                 ].map(({ label, value }) => (
                   <div key={label} className="bg-muted/50 rounded-lg p-3 text-center">
                     <p className="text-[10px] text-muted-foreground">{label}</p>
-                    <p className="text-lg font-mono font-bold text-foreground">{value}</p>
+                    <p className="text-base font-mono font-bold tabular-nums text-foreground sm:text-lg">{value}</p>
                   </div>
                 ))}
               </div>
@@ -404,7 +355,7 @@ export default function TrainPage() {
               Model Architecture
             </h3>
             <div className="font-mono text-xs text-muted-foreground space-y-1">
-              <p>Input: Dense(256) → 156 features [R63|L63|Face30]</p>
+              <p>Input: Dense(256) → 63 primary-hand features</p>
               <p>Hidden 1: Dense(256, ReLU) + Dropout(0.3)</p>
               <p>Hidden 2: Dense(128, ReLU) + Dropout(0.2)</p>
               <p>Output: Dense({dataset.labels.length || 'N'}, Softmax)</p>

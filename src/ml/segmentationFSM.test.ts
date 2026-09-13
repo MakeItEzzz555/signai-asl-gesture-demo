@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { SegmentationFSM, type SegmentationConfig } from './segmentationFSM';
+import { DEFAULT_SEGMENTATION_CONFIG, SegmentationFSM, type SegmentationConfig } from './segmentationFSM';
 
 const TEST_CONFIG: SegmentationConfig = {
   blankLabel: 'blank',
@@ -183,5 +183,34 @@ describe('SegmentationFSM', () => {
     step = fsm.step({ predictedLabel: 'blank', confidenceProb: 0, isBlankLike: false, isLowMotion: true });
     expect(step.snapshot.blankStableCount).toBe(0);
     expect(step.snapshot.state).toBe('COOLDOWN');
+  });
+
+  it('resets partial confirmation after sustained confident blank with default EMA', () => {
+    const fsm = new SegmentationFSM(DEFAULT_SEGMENTATION_CONFIG);
+    for (let i = 0; i < 5; i++) {
+      fsm.step({ predictedLabel: 'hello', confidenceProb: 0.97, isBlankLike: false, isLowMotion: false });
+    }
+    for (let i = 0; i < 20; i++) {
+      fsm.step({ predictedLabel: 'blank', confidenceProb: 0.99, isBlankLike: true, isLowMotion: false });
+    }
+    expect(fsm.getSnapshot().state).toBe('IDLE');
+    const emitted = Array.from({ length: 3 }, () =>
+      fsm.step({ predictedLabel: 'hello', confidenceProb: 0.97, isBlankLike: false, isLowMotion: false }).emittedWord,
+    );
+    expect(emitted).toEqual([null, null, null]);
+  });
+
+  it('can disable ONNX-specific late commit labels for a static classifier', () => {
+    const fsm = new SegmentationFSM({ ...TEST_CONFIG, lateCommitLabels: false });
+    let emitted: string | null = null;
+    for (let i = 0; i < TEST_CONFIG.confirmFrames; i++) {
+      emitted = fsm.step({
+        predictedLabel: 'goodbye',
+        confidenceProb: 0.98,
+        isBlankLike: false,
+        isLowMotion: false,
+      }).emittedWord;
+    }
+    expect(emitted).toBe('goodbye');
   });
 });

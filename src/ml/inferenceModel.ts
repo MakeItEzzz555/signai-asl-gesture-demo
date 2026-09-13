@@ -78,6 +78,7 @@ export interface SequencePrediction {
 let session: ort.InferenceSession | null = null;
 let labels: string[] = [];
 let isLoading = false;
+let loadPromise: Promise<boolean> | null = null;
 let loadError: string | null = null;
 let hasBlankLabel = false;
 let ortConfigured = false;
@@ -88,9 +89,10 @@ interface Pipeline {
   featureBuffer: Float32Array[];
   prevCoords: Float32Array | null;
   framesSinceInfer: number;
-  inferenceInFlight: boolean;
+  generation: number;
+  nextTaskId: number;
+  activeTask: { id: number; generation: number } | null;
   lastPrediction: SequencePrediction | null;
-  seqBuffer: Float32Array;
   fsm: SegmentationFSM;
 }
 
@@ -120,9 +122,10 @@ function createPipeline(config = DEFAULT_SEGMENTATION_CONFIG): Pipeline {
     featureBuffer: [],
     prevCoords: null,
     framesSinceInfer: 0,
-    inferenceInFlight: false,
+    generation: 0,
+    nextTaskId: 1,
+    activeTask: null,
     lastPrediction: null,
-    seqBuffer: new Float32Array(SEQ_LEN * FRAME_FEATURE_DIM),
     fsm: new SegmentationFSM(config),
   };
 }
@@ -132,7 +135,9 @@ const rightPipeline = createPipeline();
 // ── Utility functions ────────────────────────────────────────────────────────
 function configureOrt() {
   if (ortConfigured) return;
-  ort.env.wasm.proxy = false;
+  // Keep WASM compilation and inference off the UI thread. Cold visits still
+  // download the model/runtime once, but controls and animations remain responsive.
+  ort.env.wasm.proxy = true;
   ort.env.wasm.numThreads = 1;
   ort.env.wasm.wasmPaths = {
     'ort-wasm-simd.wasm': 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.18.0/dist/ort-wasm-simd.wasm',
@@ -260,29 +265,34 @@ function validateSessionSignature(loadedSession: ort.InferenceSession, loadedLab
   }
 }
 
-export async function loadModel(): Promise<boolean> {
-  if (session) return true;
-  if (isLoading) return false;
+export function loadModel(): Promise<boolean> {
+  if (session) return Promise.resolve(true);
+  if (loadPromise) return loadPromise;
   if (loadError) loadError = null;
 
   isLoading = true;
-  try {
-    const [loadedLabels, loadedSession] = await Promise.all([loadLabels(), createSession()]);
-    validateSessionSignature(loadedSession, loadedLabels);
-    labels = loadedLabels;
-    session = loadedSession;
-    hasBlankLabel = loadedLabels.includes(BLANK_LABEL);
-    loadError = null;
-    return true;
-  } catch (err) {
-    loadError = err instanceof Error ? err.message : 'Failed to load ONNX model';
-    session = null;
-    labels = [];
-    hasBlankLabel = false;
-    return false;
-  } finally {
-    isLoading = false;
-  }
+  loadPromise = (async () => {
+    try {
+      const [loadedLabels, loadedSession] = await Promise.all([loadLabels(), createSession()]);
+      validateSessionSignature(loadedSession, loadedLabels);
+      labels = loadedLabels;
+      session = loadedSession;
+      hasBlankLabel = loadedLabels.includes(BLANK_LABEL);
+      loadError = null;
+      return true;
+    } catch (err) {
+      loadError = err instanceof Error ? err.message : 'Failed to load ONNX model';
+      session = null;
+      labels = [];
+      hasBlankLabel = false;
+      return false;
+    } finally {
+      isLoading = false;
+      loadPromise = null;
+    }
+  })();
+
+  return loadPromise;
 }
 
 export function isModelReady(): boolean { return session !== null && labels.length > 0; }
@@ -357,7 +367,7 @@ async function predictWithPipeline(
   }
 
   // Another inference already in-flight for this hand.
-  if (p.inferenceInFlight) return reuseLastPrediction(p, motionEnergy);
+  if (p.activeTask?.generation === p.generation) return reuseLastPrediction(p, motionEnergy);
 
   p.framesSinceInfer++;
   const shouldRunModel = !lowMotion || p.framesSinceInfer >= FORCE_INFER_INTERVAL;
@@ -367,13 +377,17 @@ async function predictWithPipeline(
     return result;
   }
 
-  p.inferenceInFlight = true;
+  const task = { id: p.nextTaskId++, generation: p.generation };
+  p.activeTask = task;
   try {
-    // Pack feature buffer into the reusable sequence tensor
+    // Give the async task an immutable input snapshot. A reset/new generation
+    // can then ingest and infer without mutating memory still owned by this run.
+    const inputSnapshot = new Float32Array(SEQ_LEN * FRAME_FEATURE_DIM);
     for (let t = 0; t < SEQ_LEN; t++) {
-      p.seqBuffer.set(p.featureBuffer[t], t * FRAME_FEATURE_DIM);
+      inputSnapshot.set(p.featureBuffer[t], t * FRAME_FEATURE_DIM);
     }
-    const raw = await runSequenceInference(p.seqBuffer);
+    const raw = await runSequenceInference(inputSnapshot);
+    if (task.generation !== p.generation) return null;
     if (!raw) return null;
 
     p.framesSinceInfer = 0;
@@ -413,10 +427,13 @@ async function predictWithPipeline(
     p.lastPrediction = result;
     return result;
   } catch (err) {
+    if (task.generation !== p.generation) return null;
     console.error('ONNX prediction error:', err);
     return null;
   } finally {
-    p.inferenceInFlight = false;
+    if (p.activeTask?.id === task.id && p.activeTask.generation === task.generation) {
+      p.activeTask = null;
+    }
   }
 }
 
@@ -437,8 +454,8 @@ export async function predict(
 }
 
 export function resetPredictionState() {
+  rightPipeline.generation += 1;
   resetPipeline(rightPipeline);
   rightPipeline.fsm.reset();
-  rightPipeline.inferenceInFlight = false;
   rightPipeline.lastPrediction = null;
 }

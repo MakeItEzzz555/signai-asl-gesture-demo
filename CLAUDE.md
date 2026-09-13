@@ -39,7 +39,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-SignAI is a browser-based, 100% client-side ASL (American Sign Language) hackathon demo. The default demo path uses one primary hand for ONNX dynamic gesture inference, plus a deterministic fingertip-to-face-region heuristic for face-touch interactions. Collaborators can also train a browser-local TensorFlow.js model and select Hybrid mode in Recognize — no server, no data collection.
+SignAI is a browser-based ASL (American Sign Language) hackathon demo. The default demo path uses one primary hand for ONNX dynamic gesture inference, plus a deterministic fingertip-to-face-region heuristic for face-touch interactions. Collaborators can train a browser-local TensorFlow.js model and select Hybrid mode. Webcam frames and landmarks stay local; optional cloud voices send generated speech text through `/api/tts`.
 
 ## Commands
 
@@ -69,9 +69,9 @@ Webcam → MediaPipe Hands (one primary hand, 21 landmarks × 3 = 63 dims)
 
 The default ONNX vocabulary is `hello`, `yes`, `no`, `please`, `help`, and `blank`. The rollback ONNX artifact still has a `goodbye` output for compatibility, but `inferenceModel.ts` suppresses it from the demo runtime.
 
-Recognize also has optional Hybrid mode. Hybrid mode uses the singleton model in `src/ml/model.ts`, expects the current 156-dim MediaPipe feature vector, and applies a simple confidence/stability gate before emitting or speaking custom labels. If TF.js confidence is below the shared threshold, the ONNX sequence pipeline continues as fallback for default gestures. If no custom model is trained or loaded, the UI keeps ONNX mode active and shows a toast.
+Recognize also has optional Hybrid mode. The facade in `src/ml/model.ts` lazily loads a TensorFlow.js classifier trained on 63 primary-hand features; callers may pass the current extended vector and the engine selects those 63 values. A source router gives the shipped ONNX model priority for default gestures and admits strong, stable custom labels after ONNX absence. If no custom model is trained or loaded, the UI keeps ONNX mode active and reports that state.
 
-Custom gesture translations live in `AppContext`, persist to `localStorage` under `signai:customTranslations`, and are included in new dataset exports. Display and speech should resolve labels in this order: custom translation for the selected language, built-in translation, raw label.
+Samples and custom translations live in one versioned IndexedDB snapshot managed by `AppContext` and are included together in dataset exports. Accessibility preferences use `localStorage`. Display and speech resolve labels in this order: custom translation for the selected language, built-in translation, raw label.
 
 Face-touch labels are not trained ONNX classes. `useMediaPipe.ts` keeps FaceMesh active and detects only index/middle fingertip proximity to mouth, eye, nose, forehead, or ear. `RecognizePage.tsx` suppresses hand-only output as soon as raw face contact is detected, then emits one mapped face-region label after a 4-frame same-region confirmation gate.
 

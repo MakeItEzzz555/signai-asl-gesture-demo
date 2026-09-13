@@ -6,6 +6,17 @@ import {
   type LanguageCode,
 } from '../i18n/translations';
 import { FEATURE_DIM_HAND, FEATURE_DIM_EXTENDED, toHandOnlyFeatures } from '../utils/landmarks';
+import type { DatasetStorageSnapshot } from './datasetStorage';
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
+function createKeyedRecord<T>(): Record<string, T> {
+  return Object.create(null) as Record<string, T>;
+}
 
 export function oneHotEncode(labels: string[], labelNames: string[]): number[][] {
   return labels.map(label => {
@@ -138,8 +149,11 @@ function parseSampleArray(data: unknown): { samples: GestureSample[]; convertedT
 
   let convertedToHandOnlyCount = 0;
   const samples = data.map((item: unknown, i: number) => {
-    const obj = item as Record<string, unknown>;
-    if (typeof obj.label !== 'string') throw new Error(`Sample ${i}: missing "label" string`);
+    if (!isPlainObject(item)) throw new Error(`Sample ${i}: must be an object`);
+    const obj = item;
+    if (typeof obj.label !== 'string' || !obj.label.trim()) {
+      throw new Error(`Sample ${i}: "label" must be a nonempty string`);
+    }
     if (!Array.isArray(obj.landmarks)) throw new Error(`Sample ${i}: missing "landmarks" array`);
     if (obj.landmarks.length !== FEATURE_DIM_HAND && obj.landmarks.length !== FEATURE_DIM_EXTENDED) {
       throw new Error(`Sample ${i}: landmarks must have ${FEATURE_DIM_HAND} (hand-only) or ${FEATURE_DIM_EXTENDED} (legacy extended) values, got ${obj.landmarks.length}`);
@@ -150,8 +164,11 @@ function parseSampleArray(data: unknown): { samples: GestureSample[]; convertedT
     if (obj.landmarks.length === FEATURE_DIM_EXTENDED) {
       convertedToHandOnlyCount += 1;
     }
+    if (obj.timestamp !== undefined && (typeof obj.timestamp !== 'number' || !Number.isFinite(obj.timestamp))) {
+      throw new Error(`Sample ${i}: "timestamp" must be a finite number when provided`);
+    }
     return {
-      label: obj.label as string,
+      label: obj.label.trim(),
       landmarks: toHandOnlyFeatures(obj.landmarks as number[]),
       timestamp: typeof obj.timestamp === 'number' ? obj.timestamp : Date.now(),
     };
@@ -161,16 +178,16 @@ function parseSampleArray(data: unknown): { samples: GestureSample[]; convertedT
 }
 
 function parseCustomTranslations(data: unknown): CustomTranslations {
-  if (!data || typeof data !== 'object' || Array.isArray(data)) return {};
+  if (!isPlainObject(data)) return createKeyedRecord<Partial<Record<LanguageCode, string>>>();
 
   const validLanguages = new Set<LanguageCode>(LANGUAGES.map(l => l.code));
-  const translations: CustomTranslations = {};
+  const translations = createKeyedRecord<Partial<Record<LanguageCode, string>>>();
 
-  for (const [label, entries] of Object.entries(data as Record<string, unknown>)) {
+  for (const [label, entries] of Object.entries(data)) {
     const labelKey = normalizeGestureLabel(label);
-    if (!labelKey || !entries || typeof entries !== 'object' || Array.isArray(entries)) continue;
+    if (!labelKey || !isPlainObject(entries)) continue;
 
-    for (const [lang, value] of Object.entries(entries as Record<string, unknown>)) {
+    for (const [lang, value] of Object.entries(entries)) {
       if (!validLanguages.has(lang as LanguageCode) || typeof value !== 'string') continue;
       const trimmed = value.trim();
       if (!trimmed) continue;
@@ -195,11 +212,11 @@ export function parseImportedDatasetBundle(json: string): ParsedDatasetImport {
     };
   }
 
-  if (!data || typeof data !== 'object') {
+  if (!isPlainObject(data)) {
     throw new Error('Dataset must be a JSON array or object');
   }
 
-  const obj = data as Record<string, unknown>;
+  const obj = data;
   const parsed = parseSampleArray(obj.samples);
   return {
     samples: parsed.samples,
@@ -212,8 +229,25 @@ export function parseImportedDataset(json: string): GestureSample[] {
   return parseImportedDatasetBundle(json).samples;
 }
 
+export function parseStoredDatasetSnapshot(data: unknown): DatasetStorageSnapshot {
+  if (!isPlainObject(data) || data.schemaVersion !== 1) {
+    throw new Error('Stored dataset has an unsupported format');
+  }
+  if (typeof data.revision !== 'number' || !Number.isSafeInteger(data.revision) || data.revision < 0) {
+    throw new Error('Stored dataset has an invalid revision');
+  }
+
+  const parsed = parseSampleArray(data.samples);
+  return {
+    schemaVersion: 1,
+    revision: data.revision,
+    samples: parsed.samples,
+    customTranslations: parseCustomTranslations(data.customTranslations),
+  };
+}
+
 export function getSampleCounts(dataset: Dataset): Record<string, number> {
-  const counts: Record<string, number> = {};
+  const counts = createKeyedRecord<number>();
   for (const label of dataset.labels) counts[label] = 0;
   for (const sample of dataset.samples) counts[sample.label] = (counts[sample.label] || 0) + 1;
   return counts;

@@ -99,7 +99,7 @@ function StepCard({ step, icon: Icon, title, desc, href, cta, isLast }: StepCard
 
 export default function Home() {
   const heroRef = useRef<HTMLDivElement>(null);
-  const ctaRef = useRef<HTMLButtonElement>(null);
+  const ctaRef = useRef<HTMLAnchorElement>(null);
   const statNumRefs = useRef<(HTMLSpanElement | null)[]>([]);
   const revealRefs = useRef<(HTMLDivElement | null)[]>([]);
   const [, forceRender] = useState(0);
@@ -186,7 +186,7 @@ export default function Home() {
     return () => observer.disconnect();
   }, []);
 
-  const handleRipple = (e: React.MouseEvent<HTMLButtonElement>) => {
+  const handleRipple = (e: React.MouseEvent<HTMLAnchorElement>) => {
     const btn = e.currentTarget;
     const rect = btn.getBoundingClientRect();
     const ripple = document.createElement('div');
@@ -258,7 +258,7 @@ export default function Home() {
 
           <p data-hero-word className="text-lg md:text-xl text-muted-foreground max-w-2xl mx-auto leading-relaxed">
             Real-time American Sign Language gesture recognition using MediaPipe, ONNX Runtime, and face-touch detection.
-            <span className="text-primary/80 font-medium"> Fully client-side — your data never leaves your device.</span>
+            <span className="text-primary/80 font-medium"> Camera recognition stays on your device; online speech is optional.</span>
           </p>
 
           {/* Badges */}
@@ -275,15 +275,14 @@ export default function Home() {
           </div>
 
           {/* CTA */}
-          <Link href="/recognize">
-            <button
-              ref={ctaRef}
-              className="btn-glow mt-4 flex items-center gap-3 px-12 py-5 rounded-xl text-xl font-bold mx-auto"
-              onMouseDown={handleRipple}
-            >
-              <Camera className="w-6 h-6" />
-              Start Recognition
-            </button>
+          <Link
+            ref={ctaRef}
+            href="/recognize"
+            className="btn-glow mt-4 flex w-fit items-center gap-3 px-12 py-5 rounded-xl text-xl font-bold mx-auto"
+            onMouseDown={handleRipple}
+          >
+            <Camera className="w-6 h-6" />
+            Start Recognition
           </Link>
 
           {/* Stats with counters */}
@@ -361,8 +360,8 @@ export default function Home() {
               },
               {
                 icon: Lock,
-                title: '100% Private',
-                desc: 'No cloud, no servers, no data collection. Everything runs in your browser.',
+                title: 'Private Camera Processing',
+                desc: 'Camera frames, landmarks, and recognition stay in your browser. Online speech is an explicit option.',
               },
               {
                 icon: Smartphone,

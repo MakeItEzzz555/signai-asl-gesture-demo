@@ -35,8 +35,7 @@ export default function AboutPage() {
           About Gesto
         </h1>
         <p className="text-muted-foreground mt-1 max-w-xl">
-          A focused ASL gesture demo built entirely in the browser —
-          no servers, no data collection, no setup required.
+          A focused ASL gesture demo with local camera processing and optional online speech output.
         </p>
       </div>
 
@@ -152,8 +151,8 @@ export default function AboutPage() {
             },
             {
               icon: Lock,
-              title: '100% Private',
-              desc: 'All processing happens locally in your browser. No data ever leaves your device.',
+              title: 'Local Vision Processing',
+              desc: 'Camera frames, landmarks, datasets, and recognition stay in your browser. Online speech sends generated text only when enabled.',
             },
             {
               icon: Code,
@@ -256,7 +255,7 @@ export default function AboutPage() {
           <h3 className="text-sm font-semibold text-foreground" style={{ fontFamily: 'Space Grotesk' }}>
             Technology Stack
           </h3>
-          <p className="text-xs text-muted-foreground mt-0.5">All open-source, all client-side</p>
+          <p className="text-xs text-muted-foreground mt-0.5">Open-source browser recognition with optional speech service</p>
         </div>
         <div className="p-6">
           <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
@@ -288,7 +287,7 @@ export default function AboutPage() {
       {/* ── Footer ───────────────────────────────────────────────────── */}
       <div className="text-center text-xs text-muted-foreground border-t border-border pt-6 space-y-1">
         <p className="font-mono">Gesto v1.0 · Built with MediaPipe + ONNX Runtime</p>
-        <p className="text-muted-foreground/60">100% client-side · No servers · No data collection</p>
+        <p className="text-muted-foreground/60">Local camera recognition · Optional online speech text</p>
       </div>
     </div>
   );

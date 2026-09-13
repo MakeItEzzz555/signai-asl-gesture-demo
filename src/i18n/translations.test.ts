@@ -18,4 +18,12 @@ describe('translateGesture', () => {
       },
     })).toBe('Προσαρμοσμένο κείμενο');
   });
+
+  it('only reads own custom translation keys', () => {
+    const translations = Object.create(null) as Record<string, { en: string }>;
+    translations.__proto__ = { en: 'Safe proto label' };
+
+    expect(translateGesture('__proto__', 'el', translations)).toBe('Safe proto label');
+    expect(translateGesture('constructor', 'el', {})).toBe('constructor');
+  });
 });
