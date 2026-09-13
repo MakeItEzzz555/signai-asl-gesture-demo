@@ -319,9 +319,9 @@ export default function DatasetPage() {
 
       <div className="grid grid-cols-1 gap-6 xl:grid-cols-5">
         {/* ── Left: Camera + Recording ─────────────────────────────── */}
-        <div className="min-w-0 space-y-4 xl:contents">
+        <div className="min-w-0 space-y-4 xl:col-span-3 xl:row-start-1">
           {/* Camera panel */}
-          <div className="bg-card border border-border rounded-xl overflow-hidden xl:col-span-3 xl:row-start-1 xl:flex xl:h-full xl:flex-col">
+          <div className="bg-card border border-border rounded-xl overflow-hidden">
             <div className="flex items-center justify-between px-4 py-3 border-b border-border">
               <div className="flex items-center gap-2">
                 <Camera className="w-4 h-4 text-primary" />
@@ -346,7 +346,7 @@ export default function DatasetPage() {
             </div>
 
             {/* Video container */}
-            <div className="relative bg-black aspect-video xl:flex-1">
+            <div className="relative bg-black aspect-video">
               <video
                 ref={videoRef}
                 className="w-full h-full object-cover"
@@ -449,7 +449,7 @@ export default function DatasetPage() {
           </div>
 
           {/* Gesture selector */}
-          <div className="bg-card border border-border rounded-xl p-4 xl:col-span-5 xl:row-start-2">
+          <div className="bg-card border border-border rounded-xl p-4">
             <h3 className="text-sm font-semibold mb-3" style={{ fontFamily: 'Space Grotesk' }}>
               Recording Target: <span className="text-primary">{selectedGesture}</span>
             </h3>
@@ -658,7 +658,7 @@ export default function DatasetPage() {
         </div>
 
         {/* Recording tips */}
-        <div className="w-full bg-muted/30 border border-border rounded-xl p-4 xl:col-span-5 xl:row-start-3">
+        <div className="w-full bg-muted/30 border border-border rounded-xl p-4 xl:col-span-5 xl:row-start-2">
           <h3 className="text-xs font-semibold text-muted-foreground mb-2 uppercase tracking-wide">
             Recording Tips
           </h3>
