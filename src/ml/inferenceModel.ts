@@ -78,6 +78,7 @@ export interface SequencePrediction {
 let session: ort.InferenceSession | null = null;
 let labels: string[] = [];
 let isLoading = false;
+let loadPromise: Promise<boolean> | null = null;
 let loadError: string | null = null;
 let hasBlankLabel = false;
 let ortConfigured = false;
@@ -134,7 +135,9 @@ const rightPipeline = createPipeline();
 // ── Utility functions ────────────────────────────────────────────────────────
 function configureOrt() {
   if (ortConfigured) return;
-  ort.env.wasm.proxy = false;
+  // Keep WASM compilation and inference off the UI thread. Cold visits still
+  // download the model/runtime once, but controls and animations remain responsive.
+  ort.env.wasm.proxy = true;
   ort.env.wasm.numThreads = 1;
   ort.env.wasm.wasmPaths = {
     'ort-wasm-simd.wasm': 'https://cdn.jsdelivr.net/npm/onnxruntime-web@1.18.0/dist/ort-wasm-simd.wasm',
@@ -262,29 +265,34 @@ function validateSessionSignature(loadedSession: ort.InferenceSession, loadedLab
   }
 }
 
-export async function loadModel(): Promise<boolean> {
-  if (session) return true;
-  if (isLoading) return false;
+export function loadModel(): Promise<boolean> {
+  if (session) return Promise.resolve(true);
+  if (loadPromise) return loadPromise;
   if (loadError) loadError = null;
 
   isLoading = true;
-  try {
-    const [loadedLabels, loadedSession] = await Promise.all([loadLabels(), createSession()]);
-    validateSessionSignature(loadedSession, loadedLabels);
-    labels = loadedLabels;
-    session = loadedSession;
-    hasBlankLabel = loadedLabels.includes(BLANK_LABEL);
-    loadError = null;
-    return true;
-  } catch (err) {
-    loadError = err instanceof Error ? err.message : 'Failed to load ONNX model';
-    session = null;
-    labels = [];
-    hasBlankLabel = false;
-    return false;
-  } finally {
-    isLoading = false;
-  }
+  loadPromise = (async () => {
+    try {
+      const [loadedLabels, loadedSession] = await Promise.all([loadLabels(), createSession()]);
+      validateSessionSignature(loadedSession, loadedLabels);
+      labels = loadedLabels;
+      session = loadedSession;
+      hasBlankLabel = loadedLabels.includes(BLANK_LABEL);
+      loadError = null;
+      return true;
+    } catch (err) {
+      loadError = err instanceof Error ? err.message : 'Failed to load ONNX model';
+      session = null;
+      labels = [];
+      hasBlankLabel = false;
+      return false;
+    } finally {
+      isLoading = false;
+      loadPromise = null;
+    }
+  })();
+
+  return loadPromise;
 }
 
 export function isModelReady(): boolean { return session !== null && labels.length > 0; }

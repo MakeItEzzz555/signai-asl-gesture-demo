@@ -319,9 +319,9 @@ export default function DatasetPage() {
 
       <div className="grid grid-cols-1 gap-6 xl:grid-cols-5">
         {/* ── Left: Camera + Recording ─────────────────────────────── */}
-        <div className="min-w-0 space-y-4 xl:col-span-3">
+        <div className="min-w-0 space-y-4 xl:contents">
           {/* Camera panel */}
-          <div className="bg-card border border-border rounded-xl overflow-hidden">
+          <div className="bg-card border border-border rounded-xl overflow-hidden xl:col-span-3 xl:row-start-1 xl:flex xl:h-full xl:flex-col">
             <div className="flex items-center justify-between px-4 py-3 border-b border-border">
               <div className="flex items-center gap-2">
                 <Camera className="w-4 h-4 text-primary" />
@@ -346,7 +346,7 @@ export default function DatasetPage() {
             </div>
 
             {/* Video container */}
-            <div className="relative bg-black aspect-video">
+            <div className="relative bg-black aspect-video xl:flex-1">
               <video
                 ref={videoRef}
                 className="w-full h-full object-cover"
@@ -449,7 +449,7 @@ export default function DatasetPage() {
           </div>
 
           {/* Gesture selector */}
-          <div className="bg-card border border-border rounded-xl p-4">
+          <div className="bg-card border border-border rounded-xl p-4 xl:col-span-5 xl:row-start-2">
             <h3 className="text-sm font-semibold mb-3" style={{ fontFamily: 'Space Grotesk' }}>
               Recording Target: <span className="text-primary">{selectedGesture}</span>
             </h3>
@@ -523,9 +523,9 @@ export default function DatasetPage() {
         </div>
 
         {/* ── Right: Dataset Stats ─────────────────────────────────── */}
-        <div className="min-w-0 space-y-4 xl:col-span-2">
+        <div className="min-w-0 space-y-4 xl:col-span-2 xl:row-start-1 xl:flex xl:h-full xl:flex-col">
           {/* Summary */}
-          <div className="bg-card border border-border rounded-xl p-4">
+          <div className="bg-card border border-border rounded-xl p-4 xl:flex-1">
             <h3 className="text-sm font-semibold mb-3" style={{ fontFamily: 'Space Grotesk' }}>
               Dataset Summary
             </h3>
@@ -603,7 +603,7 @@ export default function DatasetPage() {
           </div>
 
           {/* Import/Export controls */}
-          <div className="bg-card border border-border rounded-xl p-4 space-y-2">
+          <div className="bg-card border border-border rounded-xl p-4 space-y-2 xl:flex-1">
             <h3 className="text-sm font-semibold mb-3" style={{ fontFamily: 'Space Grotesk' }}>
               Data Operations
             </h3>
@@ -655,23 +655,24 @@ export default function DatasetPage() {
             </button>
           </div>
 
-          {/* Recording tips */}
-          <div className="bg-muted/30 border border-border rounded-xl p-4">
-            <h3 className="text-xs font-semibold text-muted-foreground mb-2 uppercase tracking-wide">
-              Recording Tips
-            </h3>
-            <ul className="space-y-1.5 text-xs text-muted-foreground">
-              <li>• Aim for {MIN_SAMPLES_PER_CLASS}+ samples per gesture</li>
-              <li>• Vary hand position and angle slightly</li>
-              <li>• Ensure good lighting on your hand</li>
-              <li>• Keep background uncluttered</li>
-              <li>• Hold gesture steady during capture</li>
-              <li>• Load the starter dataset before adding custom gesture samples</li>
-              <li>• Add Dataset to Current appends JSON samples without replacing existing data</li>
-              <li>• Demo training is scoped to one-hand core gestures</li>
-              <li>• Face-touch interactions are handled by the live heuristic, not custom training</li>
-            </ul>
-          </div>
+        </div>
+
+        {/* Recording tips */}
+        <div className="w-full bg-muted/30 border border-border rounded-xl p-4 xl:col-span-5 xl:row-start-3">
+          <h3 className="text-xs font-semibold text-muted-foreground mb-2 uppercase tracking-wide">
+            Recording Tips
+          </h3>
+          <ul className="grid gap-1.5 text-xs text-muted-foreground md:grid-cols-2">
+            <li>• Aim for {MIN_SAMPLES_PER_CLASS}+ samples per gesture</li>
+            <li>• Vary hand position and angle slightly</li>
+            <li>• Ensure good lighting on your hand</li>
+            <li>• Keep background uncluttered</li>
+            <li>• Hold gesture steady during capture</li>
+            <li>• Load the starter dataset before adding custom gesture samples</li>
+            <li>• Add Dataset to Current appends JSON samples without replacing existing data</li>
+            <li>• Demo training is scoped to one-hand core gestures</li>
+            <li>• Face-touch interactions are handled by the live heuristic, not custom training</li>
+          </ul>
         </div>
       </div>
     </div>

@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import * as ort from 'onnxruntime-web/wasm';
 import { deferred } from '../test/fixtures';
 
 const runs: Array<ReturnType<typeof deferred<Record<string, { data: Float32Array; dispose(): void }>>>> = [];
@@ -35,7 +36,10 @@ describe('inference generation ownership', () => {
 
   it('discards stale completion, preserves immutable inputs, and keeps the new task locked', async () => {
     const model = await import('./inferenceModel');
-    expect(await model.loadModel()).toBe(true);
+    const firstLoad = model.loadModel();
+    const concurrentLoad = model.loadModel();
+    await expect(Promise.all([firstLoad, concurrentLoad])).resolves.toEqual([true, true]);
+    expect(vi.mocked(ort.InferenceSession.create)).toHaveBeenCalledTimes(1);
     model.resetPredictionState();
 
     const frame = (value: number) => Array.from({ length: 63 }, () => value);

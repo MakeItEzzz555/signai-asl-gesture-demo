@@ -332,14 +332,14 @@ export default function TrainPage() {
               </div>
               <div className="grid grid-cols-2 xl:grid-cols-4 gap-3">
                 {[
-                  { label: 'Final Loss', value: lastLog.loss },
+                  { label: 'Final Loss', value: lastLog.loss.toFixed(4) },
                   { label: 'Train Accuracy', value: `${(lastLog.accuracy * 100).toFixed(1)}%` },
-                  { label: 'Val Loss', value: lastLog.valLoss },
+                  { label: 'Val Loss', value: lastLog.valLoss.toFixed(4) },
                   { label: 'Val Accuracy', value: `${(lastLog.valAccuracy * 100).toFixed(1)}%` },
                 ].map(({ label, value }) => (
                   <div key={label} className="bg-muted/50 rounded-lg p-3 text-center">
                     <p className="text-[10px] text-muted-foreground">{label}</p>
-                    <p className="text-lg font-mono font-bold text-foreground">{value}</p>
+                    <p className="text-base font-mono font-bold tabular-nums text-foreground sm:text-lg">{value}</p>
                   </div>
                 ))}
               </div>

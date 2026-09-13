@@ -805,6 +805,49 @@ export default function RecognizePage() {
       ? 'text-warning'
       : 'text-destructive';
 
+  const sentenceOutput = (
+    <div className="panel-accent bg-card border border-border rounded-xl p-4">
+      <div className="flex items-center justify-between mb-3">
+        <p className="text-xs font-mono text-muted-foreground">SENTENCE OUTPUT</p>
+        <button
+          onClick={() => { stopSpeech(); setRecognizedWords([]); dispatch({ type: 'CONFIRM_PENDING' }); }}
+          className="text-muted-foreground hover:text-foreground transition-colors"
+          aria-label="Clear sentence"
+        >
+          <Trash2 className="w-3.5 h-3.5" />
+        </button>
+      </div>
+      <div className="min-h-[72px] rounded-lg bg-muted/40 border border-border px-3 py-2">
+        {displaySentence.trim().length > 0 ? (
+          <p className="text-sm text-foreground leading-relaxed">{displaySentence}</p>
+        ) : (
+          <p className="text-xs text-muted-foreground py-2">
+            Recognized gestures and face-touch interactions are added here automatically.
+          </p>
+        )}
+      </div>
+      <div className="mt-3 space-y-1.5 max-h-40 overflow-y-auto">
+        {recognizedWords.map((item, i) => (
+          <div
+            key={item.id}
+            className={cn(
+              'flex items-center justify-between px-3 py-2 rounded-lg',
+              i === 0 ? 'bg-primary/10 border border-primary/20' : 'bg-muted/50',
+            )}
+          >
+            <span className={cn(
+              'text-sm font-bold uppercase',
+              i === 0 ? 'text-primary' : 'text-foreground',
+            )}>
+              {translateGesture(item.word, language, customTranslations)}
+            </span>
+            <span className="text-xs font-mono text-muted-foreground">{item.confidence}%</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+
   return (
     <div className="w-full space-y-6">
       <div className="flex flex-col items-start justify-between gap-4 sm:flex-row">
@@ -834,9 +877,9 @@ export default function RecognizePage() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 gap-6 xl:grid-cols-5 xl:gap-8">
+      <div className="grid grid-cols-1 gap-6 xl:grid-cols-10 xl:gap-8">
         {/* Left: Camera Feed */}
-        <div className="col-span-1 space-y-4 xl:col-span-3">
+        <div className="col-span-1 space-y-4 xl:col-span-7">
           <div className="cam-gradient-border bg-card rounded-xl overflow-hidden">
             <div className="flex items-center justify-between px-4 py-3 border-b border-border">
               <div className="flex items-center gap-2">
@@ -1071,10 +1114,11 @@ export default function RecognizePage() {
               </button>
             </div>
           </div>
+          {sentenceOutput}
         </div>
 
         {/* Right: Recognition State */}
-        <div className="col-span-1 space-y-4 xl:col-span-2">
+        <div className="col-span-1 space-y-4 xl:col-span-3">
 
           {/* ── Live Text Output (≥80% confidence threshold) ───────────────── */}
           <div className="panel-accent bg-card border border-border rounded-xl p-4">
@@ -1314,49 +1358,6 @@ export default function RecognizePage() {
             </div>
           </div>
 
-          <div className="panel-accent bg-card border border-border rounded-xl p-4">
-            <div className="flex items-center justify-between mb-3">
-              <p className="text-xs font-mono text-muted-foreground">SENTENCE OUTPUT</p>
-              <button
-                onClick={() => { stopSpeech(); setRecognizedWords([]); dispatch({ type: 'CONFIRM_PENDING' }); }}
-                className="text-muted-foreground hover:text-foreground transition-colors"
-                aria-label="Clear sentence"
-              >
-                <Trash2 className="w-3.5 h-3.5" />
-              </button>
-            </div>
-            <div className="min-h-[72px] rounded-lg bg-muted/40 border border-border px-3 py-2">
-              {displaySentence.trim().length > 0 ? (
-                <p className="text-sm text-foreground leading-relaxed">{displaySentence}</p>
-              ) : (
-                <p className="text-xs text-muted-foreground py-2">
-                  Recognized gestures and face-touch interactions are added here automatically.
-                </p>
-              )}
-            </div>
-
-            <div className="mt-3 space-y-1.5 max-h-40 overflow-y-auto">
-              {recognizedWords.map((item, i) => (
-                <div
-                  key={item.id}
-                  className={cn(
-                    'flex items-center justify-between px-3 py-2 rounded-lg',
-                    i === 0 ? 'bg-primary/10 border border-primary/20' : 'bg-muted/50',
-                  )}
-                >
-                  <span className={cn(
-                    'text-sm font-bold uppercase',
-                    i === 0 ? 'text-primary' : 'text-foreground',
-                  )}>
-                    {translateGesture(item.word, language, customTranslations)}
-                  </span>
-                  <span className="text-xs font-mono text-muted-foreground">
-                    {item.confidence}%
-                  </span>
-                </div>
-              ))}
-            </div>
-          </div>
         </div>
       </div>
 
