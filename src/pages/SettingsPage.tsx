@@ -9,14 +9,14 @@
  * - About / system info
  */
 
+import { useEffect } from 'react';
 import { Sun, Moon, Contrast, Type, Volume2, VolumeX, Mic, Info, Globe, Wifi } from 'lucide-react';
 import { useApp } from '../contexts/AppContext';
 import { useTheme } from '../contexts/ThemeContext';
 import { cn } from '@/lib/utils';
 import LanguageSelector from '../components/LanguageSelector';
 import { toast } from 'sonner';
-import { speak } from '../utils/tts';
-import { preWarmPiper, piperHasVoice } from '../utils/piperFallback';
+import { speak, stopSpeech, syncSpeechPreferences } from '../utils/tts';
 import { LANGUAGE_BCP47, LANGUAGES, translateGesture } from '../i18n/translations';
 
 function SettingRow({ icon: Icon, title, description, children }: {
@@ -26,8 +26,8 @@ function SettingRow({ icon: Icon, title, description, children }: {
   children: React.ReactNode;
 }) {
   return (
-    <div className="flex items-center justify-between py-4 border-b border-border last:border-0">
-      <div className="flex items-start gap-3">
+    <div className="flex flex-col gap-3 py-4 border-b border-border last:border-0 sm:flex-row sm:items-center sm:justify-between">
+      <div className="flex min-w-0 items-start gap-3">
         <div className="w-8 h-8 rounded-lg bg-muted flex items-center justify-center flex-shrink-0 mt-0.5">
           <Icon className="w-4 h-4 text-muted-foreground" />
         </div>
@@ -36,14 +36,15 @@ function SettingRow({ icon: Icon, title, description, children }: {
           <p className="text-xs text-muted-foreground mt-0.5">{description}</p>
         </div>
       </div>
-      <div className="flex-shrink-0 ml-4">{children}</div>
+      <div className="self-start sm:self-center sm:ml-4">{children}</div>
     </div>
   );
 }
 
-function Toggle({ checked, onChange }: { checked: boolean; onChange: () => void }) {
+function Toggle({ checked, onChange, label }: { checked: boolean; onChange: () => void; label: string }) {
   return (
     <button
+      type="button"
       onClick={onChange}
       className={cn(
         "relative w-11 h-6 rounded-full transition-colors duration-200",
@@ -51,6 +52,7 @@ function Toggle({ checked, onChange }: { checked: boolean; onChange: () => void 
       )}
       role="switch"
       aria-checked={checked}
+      aria-label={label}
     >
       <div className={cn(
         "absolute top-1 w-4 h-4 rounded-full bg-white shadow transition-transform duration-200",
@@ -64,6 +66,19 @@ export default function SettingsPage() {
   const { accessibility, setAccessibility } = useApp();
   const { theme, toggleTheme } = useTheme();
   const setTheme = (t: 'dark' | 'light') => { if (t !== theme) toggleTheme?.(); };
+
+  useEffect(() => {
+    syncSpeechPreferences({
+      audioEnabled: accessibility.audioEnabled,
+      useCloudVoices: accessibility.useCloudTts,
+      language: LANGUAGE_BCP47[accessibility.language] ?? 'en-US',
+    });
+  }, [accessibility.audioEnabled, accessibility.language, accessibility.useCloudTts]);
+
+  const updateAccessibility = (partial: Parameters<typeof setAccessibility>[0]) => {
+    if (partial.audioEnabled === false) stopSpeech();
+    setAccessibility(partial);
+  };
 
   return (
     <div className="max-w-2xl space-y-6">
@@ -88,7 +103,9 @@ export default function SettingsPage() {
         >
           <div className="flex gap-2">
             <button
+              type="button"
               onClick={() => setTheme('dark')}
+              aria-pressed={theme === 'dark'}
               className={cn(
                 "flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all border",
                 theme === 'dark'
@@ -100,7 +117,9 @@ export default function SettingsPage() {
               Dark
             </button>
             <button
+              type="button"
               onClick={() => setTheme('light')}
+              aria-pressed={theme === 'light'}
               className={cn(
                 "flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all border",
                 theme === 'light'
@@ -121,7 +140,8 @@ export default function SettingsPage() {
         >
           <Toggle
             checked={accessibility.highContrast}
-            onChange={() => setAccessibility({ highContrast: !accessibility.highContrast })}
+            onChange={() => updateAccessibility({ highContrast: !accessibility.highContrast })}
+            label="High contrast mode"
           />
         </SettingRow>
       </div>
@@ -140,9 +160,6 @@ export default function SettingsPage() {
             value={accessibility.language}
             onChange={code => {
               setAccessibility({ language: code });
-              if (accessibility.audioEnabled && piperHasVoice(code)) {
-                void preWarmPiper(code);
-              }
             }}
           />
         </SettingRow>
@@ -158,11 +175,13 @@ export default function SettingsPage() {
           title="Text Size"
           description="Adjust the base font size for better readability"
         >
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
             {(['normal', 'large', 'xl'] as const).map(size => (
               <button
                 key={size}
+                type="button"
                 onClick={() => setAccessibility({ textSize: size })}
+                aria-pressed={accessibility.textSize === size}
                 className={cn(
                   "px-3 py-1.5 rounded-lg text-xs font-medium transition-all border capitalize",
                   accessibility.textSize === size
@@ -189,7 +208,8 @@ export default function SettingsPage() {
         >
           <Toggle
             checked={accessibility.audioEnabled}
-            onChange={() => setAccessibility({ audioEnabled: !accessibility.audioEnabled })}
+            onChange={() => updateAccessibility({ audioEnabled: !accessibility.audioEnabled })}
+            label="Audio output"
           />
         </SettingRow>
 
@@ -200,7 +220,8 @@ export default function SettingsPage() {
         >
           <Toggle
             checked={accessibility.autoSpeak}
-            onChange={() => setAccessibility({ autoSpeak: !accessibility.autoSpeak })}
+            onChange={() => updateAccessibility({ autoSpeak: !accessibility.autoSpeak })}
+            label="Automatically speak confirmed gestures"
           />
         </SettingRow>
 
@@ -211,13 +232,15 @@ export default function SettingsPage() {
         >
           <Toggle
             checked={accessibility.useCloudTts}
-            onChange={() => setAccessibility({ useCloudTts: !accessibility.useCloudTts })}
+            onChange={() => updateAccessibility({ useCloudTts: !accessibility.useCloudTts })}
+            label="Online voices"
           />
         </SettingRow>
 
         {/* Speech test */}
         <div className="mt-3 pt-3 border-t border-border">
           <button
+            type="button"
             onClick={() => {
               if (!accessibility.audioEnabled) return;
               const lang = accessibility.language;
@@ -269,15 +292,15 @@ export default function SettingsPage() {
           <div className="flex justify-between">
             <span>Data Privacy</span>
             <span className={accessibility.useCloudTts ? 'text-warning' : 'text-success'}>
-              {accessibility.useCloudTts ? 'Online voices on · text sent to provider' : '100% client-side · No server'}
+              {accessibility.useCloudTts ? 'Online voices on · text sent to provider' : 'Camera and recognition stay local'}
             </span>
           </div>
         </div>
         <div className="mt-4 p-3 rounded-lg bg-muted/50 border border-border flex items-start gap-2">
           <Info className="w-4 h-4 text-primary mt-0.5 flex-shrink-0" />
           <p className="text-xs text-muted-foreground">
-            All processing happens locally in your browser. No video, audio, or gesture data is ever transmitted to any server.
-            Your privacy is fully protected.
+            Camera frames, landmarks, datasets, and recognition stay in your browser. When online voices are enabled,
+            the generated speech text is sent to the configured speech provider; video and landmarks are not sent.
           </p>
         </div>
       </div>

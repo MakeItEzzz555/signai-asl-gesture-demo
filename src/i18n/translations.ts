@@ -153,11 +153,14 @@ export function translateGesture(
 ): string {
   if (!label) return label;
   const key = normalizeGestureLabel(label);
-  const customTranslation = customTranslations?.[key]?.[lang]?.trim();
+  const customEntry = customTranslations && Object.hasOwn(customTranslations, key)
+    ? customTranslations[key]
+    : undefined;
+  const customTranslation = customEntry?.[lang]?.trim();
   if (customTranslation) return customTranslation;
-  const englishCustomTranslation = customTranslations?.[key]?.en?.trim();
+  const englishCustomTranslation = customEntry?.en?.trim();
   if (englishCustomTranslation) return englishCustomTranslation;
-  const map = GESTURE_TRANSLATIONS[key];
+  const map = Object.hasOwn(GESTURE_TRANSLATIONS, key) ? GESTURE_TRANSLATIONS[key] : undefined;
   if (!map) return label;
   return map[lang] ?? label;
 }

@@ -49,7 +49,17 @@ let initPromise: Promise<void> | null = null;
 let initFailed = false;
 
 let audioCtx: AudioContext | null = null;
-let activeSource: AudioBufferSourceNode | null = null;
+let espeakGeneration = 0;
+
+interface EspeakOperation {
+  generation: number;
+  source: AudioBufferSourceNode | null;
+  settled: boolean;
+  resolve: () => void;
+  reject: (error: Error) => void;
+}
+
+let activeOperation: EspeakOperation | null = null;
 
 // ─── Public: language support check ──────────────────────────────────────────
 
@@ -66,10 +76,19 @@ export function isEspeakReady(): boolean {
 // ─── Public: stop current playback ───────────────────────────────────────────
 
 export function stopEspeak(): void {
-  if (!activeSource) return;
-  try { activeSource.stop(); } catch { /* already stopped */ }
-  try { activeSource.disconnect(); } catch { /* already disconnected */ }
-  activeSource = null;
+  espeakGeneration++;
+  const operation = activeOperation;
+  if (!operation) return;
+  activeOperation = null;
+  if (operation.source) {
+    try { operation.source.stop(); } catch { /* already stopped */ }
+    try { operation.source.disconnect(); } catch { /* already disconnected */ }
+    operation.source = null;
+  }
+  if (!operation.settled) {
+    operation.settled = true;
+    operation.resolve();
+  }
 }
 
 // ─── Private: AudioContext ────────────────────────────────────────────────────
@@ -143,48 +162,93 @@ async function ensureInit(): Promise<void> {
  *
  * @param opts.rate  eSpeak WPM (80–450). Default 157 ≈ native rate×0.9.
  */
-export async function speakWithEspeak(
+export function speakWithEspeak(
   text: string,
   langCode: string,
   opts?: { rate?: number },
 ): Promise<void> {
   const espeakVoice = VOICE_MAP[langCode];
   if (!espeakVoice) {
-    throw new Error(`No eSpeak voice for "${langCode}" in this build`);
+    return Promise.reject(new Error(`No eSpeak voice for "${langCode}" in this build`));
   }
 
-  await ensureInit();
+  const generation = ++espeakGeneration;
+  const previous = activeOperation;
+  if (previous) {
+    activeOperation = null;
+    if (previous.source) {
+      try { previous.source.stop(); } catch { /* already stopped */ }
+      try { previous.source.disconnect(); } catch { /* already disconnected */ }
+    }
+    if (!previous.settled) {
+      previous.settled = true;
+      previous.resolve();
+    }
+  }
 
   return new Promise<void>((resolve, reject) => {
-    stopEspeak();
+    const operation: EspeakOperation = {
+      generation,
+      source: null,
+      settled: false,
+      resolve,
+      reject,
+    };
+    activeOperation = operation;
 
-    instance!.speak(
-      text,
-      { voice: espeakVoice, rate: opts?.rate ?? 157, pitch: 50 },
-      (audioData: Float32Array | null, sampleRate?: number) => {
-        if (!audioData || audioData.length === 0 || !sampleRate) {
-          reject(new Error('eSpeak returned empty audio'));
-          return;
-        }
-        try {
-          const ctx = getAudioCtx();
-          const buffer = ctx.createBuffer(1, audioData.length, sampleRate);
-          buffer.getChannelData(0).set(audioData);
+    const settle = (error?: Error) => {
+      if (operation.settled) return;
+      operation.settled = true;
+      if (activeOperation === operation) activeOperation = null;
+      if (error) operation.reject(error);
+      else operation.resolve();
+    };
 
-          const src = ctx.createBufferSource();
-          src.buffer = buffer;
-          src.connect(ctx.destination);
-          src.onended = () => {
-            if (activeSource === src) activeSource = null;
-            resolve();
-          };
-          activeSource = src;
-          src.start();
-          console.log(`[eSpeak] ${langCode} → ${espeakVoice}, ${audioData.length} samples @ ${sampleRate} Hz`);
-        } catch (err) {
-          reject(err instanceof Error ? err : new Error(String(err)));
-        }
-      },
-    );
+    void ensureInit().then(() => {
+      if (generation !== espeakGeneration || activeOperation !== operation) {
+        settle();
+        return;
+      }
+      try {
+        instance!.speak(
+          text,
+          { voice: espeakVoice, rate: opts?.rate ?? 157, pitch: 50 },
+          (audioData: Float32Array | null, sampleRate?: number) => {
+            if (generation !== espeakGeneration || activeOperation !== operation) {
+              settle();
+              return;
+            }
+            if (!audioData || audioData.length === 0 || !sampleRate) {
+              settle(new Error('eSpeak returned empty audio'));
+              return;
+            }
+            try {
+              const ctx = getAudioCtx();
+              const buffer = ctx.createBuffer(1, audioData.length, sampleRate);
+              buffer.getChannelData(0).set(audioData);
+
+              const src = ctx.createBufferSource();
+              src.buffer = buffer;
+              src.connect(ctx.destination);
+              src.onended = () => {
+                if (operation.source === src) operation.source = null;
+                settle();
+              };
+              operation.source = src;
+              src.start();
+              console.log(`[eSpeak] ${langCode} → ${espeakVoice}, ${audioData.length} samples @ ${sampleRate} Hz`);
+            } catch (err) {
+              settle(err instanceof Error ? err : new Error(String(err)));
+            }
+          },
+        );
+      } catch (error) {
+        settle(error instanceof Error ? error : new Error(String(error)));
+      }
+    }).catch(error => {
+      if (activeOperation === operation) {
+        settle(error instanceof Error ? error : new Error(String(error)));
+      }
+    });
   });
 }

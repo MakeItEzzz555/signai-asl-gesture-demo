@@ -22,9 +22,12 @@ export function ThemeProvider({
   switchable = false,
 }: ThemeProviderProps) {
   const [theme, setTheme] = useState<Theme>(() => {
-    if (switchable) {
+    if (!switchable || typeof localStorage === 'undefined') return defaultTheme;
+    try {
       const stored = localStorage.getItem("theme");
-      return (stored as Theme) || defaultTheme;
+      if (stored === 'light' || stored === 'dark') return stored;
+    } catch {
+      // Theme remains usable for this session when storage is unavailable.
     }
     return defaultTheme;
   });
@@ -35,7 +38,11 @@ export function ThemeProvider({
     root.classList.add(theme);
 
     if (switchable) {
-      localStorage.setItem("theme", theme);
+      try {
+        localStorage.setItem("theme", theme);
+      } catch {
+        // Theme remains usable for this session when storage is unavailable.
+      }
     }
   }, [theme, switchable]);
 

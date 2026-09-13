@@ -168,14 +168,29 @@ interface HandResult {
   left: Landmark[] | null;
 }
 
+interface MediaPipeModel {
+  send(options: { image: HTMLVideoElement }): Promise<void>;
+  close?: () => Promise<void>;
+}
+
+interface MediaPipeSession {
+  id: number;
+  stopped: boolean;
+  stream: MediaStream | null;
+  video: HTMLVideoElement | null;
+  hands: MediaPipeModel | null;
+  face: MediaPipeModel | null;
+  pendingSend: Promise<void> | null;
+  raf: number;
+}
+
 export function useMediaPipe(options: UseMediaPipeOptions = {}) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const handsRef = useRef<unknown>(null);
-  const faceMeshRef = useRef<unknown>(null);
-  const animFrameRef = useRef<number>(0);
+  const sessionRef = useRef<MediaPipeSession | null>(null);
+  const sessionIdRef = useRef(0);
   const fpsCounterRef = useRef({ frames: 0, lastTime: performance.now() });
-  const isRunningRef = useRef(false);
+  const mountedRef = useRef(true);
   const canvasCtxRef = useRef<CanvasRenderingContext2D | null>(null);
   const consecutiveErrorsRef = useRef(0);
   const faceInteractionConfirmRef = useRef<{ region: FaceRegion | null; frames: number }>({
@@ -220,8 +235,93 @@ export function useMediaPipe(options: UseMediaPipeOptions = {}) {
     }
   }, []);
 
+  const resetTracking = useCallback(() => {
+    lastRightFeaturesRef.current = null;
+    lastLeftFeaturesRef.current = null;
+    rightMissingRef.current = 0;
+    leftMissingRef.current = 0;
+    canvasCtxRef.current = null;
+    consecutiveErrorsRef.current = 0;
+    faceInteractionConfirmRef.current = { region: null, frames: 0 };
+    handResultRef.current = { right: null, left: null };
+    faceResultRef.current = null;
+  }, []);
+
+  const stopSessionStream = useCallback((session: MediaPipeSession) => {
+    session.stream?.getTracks().forEach(track => track.stop());
+    if (session.video?.srcObject === session.stream) {
+      session.video.srcObject = null;
+    }
+    session.stream = null;
+    session.video = null;
+  }, []);
+
+  const teardownSession = useCallback((
+    session: MediaPipeSession,
+    error: string | null = null,
+    publishState = true,
+  ) => {
+    if (!session.stopped) {
+      session.stopped = true;
+      if (session.raf) cancelAnimationFrame(session.raf);
+      session.raf = 0;
+      stopSessionStream(session);
+
+      const closeModels = async () => {
+        if (session.pendingSend) {
+          try { await session.pendingSend; } catch { /* frame error is reported separately */ }
+        }
+        await Promise.allSettled([
+          session.hands?.close?.(),
+          session.face?.close?.(),
+        ]);
+        session.hands = null;
+        session.face = null;
+      };
+      void closeModels();
+    }
+
+    if (sessionRef.current === session) sessionRef.current = null;
+    resetTracking();
+
+    if (canvasRef.current) {
+      const ctx = canvasRef.current.getContext('2d');
+      ctx?.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
+    }
+
+    if (publishState && mountedRef.current) {
+      setState({
+        isLoading: false,
+        isActive: false,
+        error,
+        fps: 0,
+        rawLandmarks: null,
+        leftRawLandmarks: null,
+        faceLandmarks: null,
+        normalizedFeatures: ZERO_FEATURES,
+        bothHandsPresent: false,
+        facePresent: false,
+        handFaceInteraction: null,
+      });
+    }
+  }, [resetTracking, stopSessionStream]);
+
   const start = useCallback(async () => {
-    if (isRunningRef.current) return;
+    if (sessionRef.current) return;
+
+    const session: MediaPipeSession = {
+      id: ++sessionIdRef.current,
+      stopped: false,
+      stream: null,
+      video: null,
+      hands: null,
+      face: null,
+      pendingSend: null,
+      raf: 0,
+    };
+    sessionRef.current = session;
+
+    const ownsSession = () => sessionRef.current === session && !session.stopped;
     setState(prev => ({ ...prev, isLoading: true, error: null }));
 
     try {
@@ -232,12 +332,14 @@ export function useMediaPipe(options: UseMediaPipeOptions = {}) {
         import('@mediapipe/hands'),
         enableFaceTracking ? import('@mediapipe/face_mesh') : Promise.resolve(null),
       ]);
+      if (!ownsSession()) return;
 
       // ── 2. Initialize Hands (one primary hand for the demo build) ───────
       const hands = new Hands({
         locateFile: (file: string) =>
           `https://cdn.jsdelivr.net/npm/@mediapipe/hands@0.4/${file}`,
       });
+      session.hands = hands as MediaPipeModel;
       hands.setOptions({
         maxNumHands: 1,
         modelComplexity: 1,
@@ -251,6 +353,7 @@ export function useMediaPipe(options: UseMediaPipeOptions = {}) {
       };
 
       hands.onResults((results: HandsResults) => {
+        if (!ownsSession()) return;
         let right: Landmark[] | null = null;
 
         if (results.multiHandLandmarks && results.multiHandLandmarks.length > 0) {
@@ -260,14 +363,13 @@ export function useMediaPipe(options: UseMediaPipeOptions = {}) {
         handResultRef.current = { right, left: null };
       });
 
-      handsRef.current = hands;
-
       // ── 3. Initialize FaceMesh only where face-touch recognition is needed ─
       if (enableFaceTracking && faceModule) {
         const faceMesh = new faceModule.FaceMesh({
           locateFile: (file: string) =>
             `https://cdn.jsdelivr.net/npm/@mediapipe/face_mesh@0.4/${file}`,
         });
+        session.face = faceMesh as MediaPipeModel;
         faceMesh.setOptions({
           maxNumFaces: 1,
           refineLandmarks: false,
@@ -277,28 +379,33 @@ export function useMediaPipe(options: UseMediaPipeOptions = {}) {
 
         type FaceResults = { multiFaceLandmarks?: Landmark[][] };
         faceMesh.onResults((results: FaceResults) => {
+          if (!ownsSession()) return;
           faceResultRef.current = results.multiFaceLandmarks?.[0] ?? null;
         });
-
-        faceMeshRef.current = faceMesh;
       } else {
         faceResultRef.current = null;
-        faceMeshRef.current = null;
       }
 
       // ── 4. Start webcam ───────────────────────────────────────────────────
       const stream = await navigator.mediaDevices.getUserMedia({
         video: { width: 640, height: 480, facingMode: 'user' },
       });
-
-      if (videoRef.current) {
-        videoRef.current.srcObject = stream;
-        await videoRef.current.play();
+      session.stream = stream;
+      if (!ownsSession()) {
+        stopSessionStream(session);
+        return;
       }
+
+      const video = videoRef.current;
+      if (!video) throw new Error('Camera view is unavailable');
+      session.video = video;
+      video.srcObject = stream;
+      await video.play();
+      if (!ownsSession()) return;
 
       // ── 5. Process frames ─────────────────────────────────────────────────
       const processFrame = async () => {
-        if (!isRunningRef.current) return;
+        if (!ownsSession()) return;
 
         const video = videoRef.current;
         if (video && video.readyState >= 2) {
@@ -316,15 +423,26 @@ export function useMediaPipe(options: UseMediaPipeOptions = {}) {
           }
 
           try {
-            const handsModel = handsRef.current as { send: (o: { image: HTMLVideoElement }) => Promise<void> };
-            const faceModel = faceMeshRef.current as { send: (o: { image: HTMLVideoElement }) => Promise<void> } | null;
+            const handsModel = session.hands;
+            const faceModel = session.face;
+            if (!handsModel) throw new Error('MediaPipe Hands is unavailable');
 
-            await handsModel.send({ image: video });
-            if (enableFaceTracking && faceModel) {
-              await faceModel.send({ image: video });
-            } else {
-              faceResultRef.current = null;
+            const pendingSend = (async () => {
+              await handsModel.send({ image: video });
+              if (!ownsSession()) return;
+              if (enableFaceTracking && faceModel) {
+                await faceModel.send({ image: video });
+              } else {
+                faceResultRef.current = null;
+              }
+            })();
+            session.pendingSend = pendingSend;
+            try {
+              await pendingSend;
+            } finally {
+              if (session.pendingSend === pendingSend) session.pendingSend = null;
             }
+            if (!ownsSession()) return;
 
             // ── Build extended 156-dim features ───────────────────────────
             const { right: rightRaw, left: leftRaw } = handResultRef.current;
@@ -405,6 +523,7 @@ export function useMediaPipe(options: UseMediaPipeOptions = {}) {
             // ── Update state ──────────────────────────────────────────────
             setState(prev => ({
               ...prev,
+              error: null,
               rawLandmarks: rightPresent ? rightRaw : null,
               leftRawLandmarks: null,
               faceLandmarks: enableFaceTracking ? faceRaw : null,
@@ -432,82 +551,50 @@ export function useMediaPipe(options: UseMediaPipeOptions = {}) {
             updateFPS();
             consecutiveErrorsRef.current = 0;
           } catch (sendErr) {
+            if (!ownsSession()) return;
             consecutiveErrorsRef.current++;
             const msg = sendErr instanceof Error ? sendErr.message : 'MediaPipe frame processing failed';
             setState(prev => ({ ...prev, error: msg }));
             if (consecutiveErrorsRef.current >= MAX_CONSECUTIVE_ERRORS) {
-              isRunningRef.current = false;
+              teardownSession(session, msg);
               return;
             }
           }
         }
 
-        animFrameRef.current = requestAnimationFrame(processFrame);
+        if (ownsSession()) session.raf = requestAnimationFrame(processFrame);
       };
 
-      isRunningRef.current = true;
-      animFrameRef.current = requestAnimationFrame(processFrame);
+      session.raf = requestAnimationFrame(processFrame);
 
-      setState(prev => ({ ...prev, isLoading: false, isActive: true }));
+      if (ownsSession()) {
+        setState(prev => ({ ...prev, isLoading: false, isActive: true }));
+      }
     } catch (err) {
+      if (!ownsSession()) return;
       const msg = err instanceof Error ? err.message : 'Failed to start camera';
-      setState(prev => ({ ...prev, isLoading: false, error: msg }));
+      teardownSession(session, msg);
     }
-  }, [options, updateFPS]);
+  }, [options, stopSessionStream, teardownSession, updateFPS]);
 
   const stop = useCallback(() => {
-    isRunningRef.current = false;
-    lastRightFeaturesRef.current = null;
-    lastLeftFeaturesRef.current = null;
-    rightMissingRef.current = 0;
-    leftMissingRef.current = 0;
-    canvasCtxRef.current = null;
-    consecutiveErrorsRef.current = 0;
-    faceInteractionConfirmRef.current = { region: null, frames: 0 };
-
-    if (animFrameRef.current) {
-      cancelAnimationFrame(animFrameRef.current);
+    const session = sessionRef.current;
+    if (session) {
+      teardownSession(session);
+      return;
     }
-
-    // Stop webcam
-    if (videoRef.current?.srcObject) {
-      const stream = videoRef.current.srcObject as MediaStream;
-      stream.getTracks().forEach(t => t.stop());
-      videoRef.current.srcObject = null;
+    resetTracking();
+    if (mountedRef.current) {
+      setState(prev => ({ ...prev, isLoading: false, isActive: false, error: null, fps: 0 }));
     }
-
-    // Clear canvas
-    if (canvasRef.current) {
-      const ctx = canvasRef.current.getContext('2d');
-      ctx?.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);
-    }
-
-    // Release models
-    const handsModel = handsRef.current as { close?: () => Promise<void> } | null;
-    if (handsModel?.close) void handsModel.close();
-    handsRef.current = null;
-
-    const faceModel = faceMeshRef.current as { close?: () => Promise<void> } | null;
-    if (faceModel?.close) void faceModel.close();
-    faceMeshRef.current = null;
-
-    setState({
-      isLoading: false,
-      isActive: false,
-      error: null,
-      fps: 0,
-      rawLandmarks: null,
-      leftRawLandmarks: null,
-      faceLandmarks: null,
-      normalizedFeatures: ZERO_FEATURES,
-      bothHandsPresent: false,
-      facePresent: false,
-      handFaceInteraction: null,
-    });
-  }, []);
+  }, [resetTracking, teardownSession]);
 
   useEffect(() => {
-    return () => { stop(); };
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      stop();
+    };
   }, [stop]);
 
   return { videoRef, canvasRef, state, start, stop };

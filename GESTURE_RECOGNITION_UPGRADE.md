@@ -1,6 +1,6 @@
 # Implementation Prompt: Dual-Hand Recognition + Proximity-Gated Face + Combined Gesture Training
 
-> Status: archived post-hackathon research direction. The active hackathon demo intentionally rolls back dual-hand ML recognition and the expanded trained vocabulary. The live demo keeps the fingertip-to-face-region heuristic, but uses one primary hand for ONNX inference and five core ML gestures.
+> Status: archived post-hackathon research direction. The 164-dimensional snippets below are a proposal, not current behavior. The active demo captures a 156-dimensional extended vector with one active 63-dimensional hand slot; the shipped ONNX sequence model derives 126 temporal features per frame, and the browser-trained custom classifier uses 63 hand features.
 
 ## Goal
 

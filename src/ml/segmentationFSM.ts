@@ -16,6 +16,8 @@ export interface SegmentationConfig {
    * counter and destabilise an otherwise-stable gesture confirmation sequence.
    */
   confEmaAlpha?: number;
+  /** Labels that require motion to settle before emission; false disables this policy. */
+  lateCommitLabels?: readonly string[] | false;
 }
 
 export const DEFAULT_SEGMENTATION_CONFIG: SegmentationConfig = {
@@ -27,6 +29,7 @@ export const DEFAULT_SEGMENTATION_CONFIG: SegmentationConfig = {
   blankStableFrames: 8,
   lowMotionStableFrames: 6,
   confEmaAlpha: 0.3,
+  lateCommitLabels: ['goodbye', 'thank you', 'thankyou'],
 };
 
 export interface SegmentationStepInput {
@@ -55,9 +58,6 @@ export interface SegmentationStepOutput {
   emittedWord: string | null;
   snapshot: SegmentationSnapshot;
 }
-
-// Late-commit labels (pre-canonicalised): only emit when motion ends.
-const LATE_COMMIT_LABELS = new Set(['goodbye', 'thank you', 'thankyou']);
 
 // Below this fraction of the confidence threshold the EMA value must fall
 // before a raw-confidence drop is treated as a "genuine" drop event.
@@ -119,6 +119,12 @@ export class SegmentationFSM {
     return s.trim().toLowerCase().replace(/[_-]+/g, ' ');
   }
 
+  private isLateCommitLabel(label: string): boolean {
+    if (this.config.lateCommitLabels === false) return false;
+    const labels = this.config.lateCommitLabels ?? DEFAULT_SEGMENTATION_CONFIG.lateCommitLabels;
+    return Boolean(labels && labels.some(candidate => this.canon(candidate) === this.canon(label)));
+  }
+
   private clearActiveGesture() {
     this.activeLabel = null;
     this.stableCount = 0;
@@ -145,18 +151,25 @@ export class SegmentationFSM {
   step(input: SegmentationStepInput): SegmentationStepOutput {
     const label = input.predictedLabel ?? this.config.blankLabel;
 
-    // ── EMA confidence smoothing ─────────────────────────────────────────────
-    // Update the exponential moving average of confidence every frame.
-    // confEmaAlpha = 0 disables smoothing (legacy / test configs).
-    const alpha = this.config.confEmaAlpha ?? 0;
-    if (alpha > 0) {
-      this.smoothedConf = alpha * input.confidenceProb + (1 - alpha) * this.smoothedConf;
-    }
-
     const isGestureCandidate =
       !input.isBlankLike &&
       label !== this.config.blankLabel &&
       input.confidenceProb >= this.config.confidenceThreshold;
+
+    // ── EMA confidence smoothing ─────────────────────────────────────────────
+    // Smooth evidence for the active class, rather than the current top class.
+    // A confident blank or different label is zero evidence for the active sign.
+    // confEmaAlpha = 0 disables smoothing (legacy / test configs).
+    const alpha = this.config.confEmaAlpha ?? 0;
+    if (alpha > 0) {
+      const activeEvidence = this.state === 'GESTURE_ACTIVE' &&
+        this.activeLabel !== null &&
+        isGestureCandidate &&
+        label === this.activeLabel
+        ? input.confidenceProb
+        : 0;
+      this.smoothedConf = alpha * activeEvidence + (1 - alpha) * this.smoothedConf;
+    }
 
     let emittedWord: string | null = null;
 
@@ -208,7 +221,7 @@ export class SegmentationFSM {
 
         // Late-commit logic: some gestures should only emit when motion ends
         if (this.state === 'GESTURE_ACTIVE' && this.activeLabel && this.stableCount >= this.config.confirmFrames) {
-          const isLateCommit = this.activeLabel ? LATE_COMMIT_LABELS.has(this.canon(this.activeLabel)) : false;
+          const isLateCommit = this.isLateCommitLabel(this.activeLabel);
           const readyByEndMotion = !isLateCommit || this.lowMotionCount >= this.minLowMotionToCommit;
 
           if (readyByEndMotion) {

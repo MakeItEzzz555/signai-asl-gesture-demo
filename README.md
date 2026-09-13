@@ -1,6 +1,6 @@
 # SignAI ASL Gesture Demo
 
-Real-time, browser-only ASL gesture recognition for a local hackathon prototype.
+Real-time ASL gesture recognition for a local hackathon prototype. Webcam processing and model inference stay in the browser; optional cloud voices send only generated speech text to the configured TTS proxy.
 
 SignAI combines MediaPipe hand/face landmarks, ONNX Runtime Web, and a small deterministic face-touch layer to recognize a narrow, reliable set of ASL-inspired demo gestures without uploading video or requiring a backend.
 
@@ -11,6 +11,7 @@ SignAI combines MediaPipe hand/face landmarks, ONNX Runtime Web, and a small det
 - **Face-region interactions:** deterministic index/middle fingertip proximity for mouth, eye, nose, forehead, and ear labels.
 - **Speech output:** confirmed words can be spoken through the Web Speech API.
 - **Hybrid training workflow:** collaborators can merge datasets, train a TensorFlow.js model, inspect metrics, and use Hybrid recognition with ONNX fallback.
+- **Durable local state:** datasets, custom translations, and accessibility preferences survive reloads in browser storage.
 - **Hackathon-ready scope:** second-hand recognition and broad gesture expansion are intentionally deferred until stronger data exists.
 
 ## Demo Flow
@@ -169,11 +170,11 @@ Then host `dist/` on any static host. The app loads MediaPipe and ONNX WASM asse
 
 ## Privacy
 
-The app does not send webcam frames to a server. MediaPipe, ONNX inference, custom sample recording, and TensorFlow.js training all run in the browser.
+The app does not send webcam frames or landmarks to a server. MediaPipe, ONNX inference, custom sample recording, and TensorFlow.js training run in the browser. When optional cloud voices are enabled, the generated phrase and selected voice are sent through `/api/tts`; local speech fallbacks do not send that text.
 
 ## Custom Dataset Notes
 
-The repository ships the active ONNX model, not the raw training dataset used to build it. The **Load Starter Dataset** button generates synthetic browser-local samples for the default demo gestures so collaborators can train quickly, then add their own recorded or imported samples on top.
+The repository ships the active ONNX model, not the raw training dataset used to build it. The **Load Starter Dataset** button generates synthetic browser-local samples so collaborators can exercise the workflow. Metrics from those samples are demonstrations and do not establish real signing accuracy or performance on unseen signers.
 
 Use **Add Dataset to Current** to append JSON samples without losing existing data. Use **Import Dataset (Replace)** when you intentionally want to clear the current in-browser dataset and load a different one.
 

@@ -34,50 +34,49 @@
  * Call it before every new utterance (tts.ts does this automatically).
  */
 
-// ─── Voice map (ISO 639-1 → Google TTS voice) ────────────────────────────────
-
-interface CloudVoice {
-  languageCode: string;
-  voiceName: string;
-}
-
-const CLOUD_VOICE_MAP: Record<string, CloudVoice> = {
-  en: { languageCode: 'en-US', voiceName: 'en-US-Neural2-F' },
-  el: { languageCode: 'el-GR', voiceName: 'el-GR-Wavenet-A' },       // WaveNet confirmed; Chirp3-HD speaker names unreliable for el
-  es: { languageCode: 'es-ES', voiceName: 'es-ES-Neural2-A' },
-  fr: { languageCode: 'fr-FR', voiceName: 'fr-FR-Neural2-A' },
-  de: { languageCode: 'de-DE', voiceName: 'de-DE-Neural2-A' },
-  ar: { languageCode: 'ar-XA', voiceName: 'ar-XA-Wavenet-B' },  // Google uses ar-XA, not ar-SA
-  ru: { languageCode: 'ru-RU', voiceName: 'ru-RU-Wavenet-A' },
-  zh: { languageCode: 'zh-CN', voiceName: 'zh-CN-Neural2-A' },
-  pt: { languageCode: 'pt-PT', voiceName: 'pt-PT-Wavenet-A' },
-  tr: { languageCode: 'tr-TR', voiceName: 'tr-TR-Standard-A' },
-  it: { languageCode: 'it-IT', voiceName: 'it-IT-Neural2-A' },
-  ja: { languageCode: 'ja-JP', voiceName: 'ja-JP-Neural2-B' },
-  ko: { languageCode: 'ko-KR', voiceName: 'ko-KR-Neural2-A' },
-  hi: { languageCode: 'hi-IN', voiceName: 'hi-IN-Neural2-A' },
-  nl: { languageCode: 'nl-NL', voiceName: 'nl-NL-Wavenet-A' },
-  pl: { languageCode: 'pl-PL', voiceName: 'pl-PL-Wavenet-A' },
-  sv: { languageCode: 'sv-SE', voiceName: 'sv-SE-Wavenet-A' },
-  no: { languageCode: 'nb-NO', voiceName: 'nb-NO-Neural2-F' },
-  da: { languageCode: 'da-DK', voiceName: 'da-DK-Neural2-D' },         // D is the confirmed high-quality Danish Neural2 variant
-  fi: { languageCode: 'fi-FI', voiceName: 'fi-FI-Standard-A' },
-  ro: { languageCode: 'ro-RO', voiceName: 'ro-RO-Standard-A' },
-  cs: { languageCode: 'cs-CZ', voiceName: 'cs-CZ-Wavenet-A' },
-  uk: { languageCode: 'uk-UA', voiceName: 'uk-UA-Standard-A' },
-  id: { languageCode: 'id-ID', voiceName: 'id-ID-Wavenet-A' },
-  th: { languageCode: 'th-TH', voiceName: 'th-TH-Standard-A' },        // Standard confirmed; Thai Neural2 availability uncertain
-  vi: { languageCode: 'vi-VN', voiceName: 'vi-VN-Wavenet-A' },
-};
+import { CLOUD_VOICE_MAP } from '../../shared/ttsVoices';
 
 // ─── Module state ─────────────────────────────────────────────────────────────
 
 type CloudState = 'unknown' | 'available' | 'unavailable';
 let cloudState: CloudState = 'unknown';
 
-let activeController: AbortController | null = null;
-let activeAudio: HTMLAudioElement | null = null;
-let activeObjectUrl: string | null = null;
+interface CloudOperation {
+  controller: AbortController | null;
+  audio: HTMLAudioElement | null;
+  objectUrl: string | null;
+  cancel: (() => void) | null;
+}
+
+let activeOperation: CloudOperation | null = null;
+
+function abortError(): Error {
+  const error = new Error('Cloud speech cancelled');
+  error.name = 'AbortError';
+  return error;
+}
+
+function releaseOperation(operation: CloudOperation, stopAudio: boolean): void {
+  if (stopAudio && operation.audio) {
+    operation.audio.onended = null;
+    operation.audio.onerror = null;
+    operation.audio.pause();
+    operation.audio.src = '';
+  }
+  operation.audio = null;
+  if (operation.objectUrl) {
+    URL.revokeObjectURL(operation.objectUrl);
+    operation.objectUrl = null;
+  }
+  if (activeOperation === operation) activeOperation = null;
+}
+
+function awaitOwned<T>(operation: CloudOperation, promise: Promise<T>): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    operation.cancel = () => reject(abortError());
+    promise.then(resolve, reject);
+  });
+}
 
 // ─── Public — availability ────────────────────────────────────────────────────
 
@@ -93,19 +92,15 @@ export function cloudAvailable(): boolean {
 
 /** Abort any in-flight fetch and stop any cloud audio currently playing. */
 export function stopCloud(): void {
-  if (activeController) {
-    activeController.abort();
-    activeController = null;
-  }
-  if (activeAudio) {
-    activeAudio.pause();
-    activeAudio.src = '';
-    activeAudio = null;
-  }
-  if (activeObjectUrl) {
-    URL.revokeObjectURL(activeObjectUrl);
-    activeObjectUrl = null;
-  }
+  const operation = activeOperation;
+  if (!operation) return;
+  activeOperation = null;
+  operation.controller?.abort();
+  operation.controller = null;
+  const cancel = operation.cancel;
+  operation.cancel = null;
+  releaseOperation(operation, true);
+  cancel?.();
 }
 
 // ─── Public — synthesis ───────────────────────────────────────────────────────
@@ -122,13 +117,20 @@ export async function speakWithCloud(
   const voice = CLOUD_VOICE_MAP[langCode];
   if (!voice) throw new Error(`[Cloud] No voice configured for "${langCode}"`);
 
+  stopCloud();
   const controller = new AbortController();
-  activeController = controller;
+  const operation: CloudOperation = {
+    controller,
+    audio: null,
+    objectUrl: null,
+    cancel: null,
+  };
+  activeOperation = operation;
   const { signal } = controller;
 
   let response: Response;
   try {
-    response = await fetch('/api/tts', {
+    response = await awaitOwned(operation, fetch('/api/tts', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -137,59 +139,78 @@ export async function speakWithCloud(
         voiceName: voice.voiceName,
       }),
       signal,
-    });
+    }));
   } catch (err) {
-    activeController = null;
+    if (activeOperation === operation) activeOperation = null;
+    operation.controller = null;
     throw err; // includes AbortError
   }
 
-  activeController = null;
+  operation.controller = null;
+  operation.cancel = null;
+  if (activeOperation !== operation || signal.aborted) throw abortError();
 
   if (response.status === 503) {
-    cloudState = 'unavailable';
-    console.warn('[Cloud] TTS proxy not configured — GOOGLE_TTS_API_KEY not set on server');
-    throw new Error('Cloud TTS not configured');
+    const error = await response.clone().json().catch(() => null) as { code?: unknown; error?: unknown } | null;
+    if (error?.code === 'TTS_NOT_CONFIGURED' || error?.error === 'TTS proxy not configured') cloudState = 'unavailable';
+    releaseOperation(operation, false);
+    throw new Error(typeof error?.error === 'string' ? error.error : 'Cloud TTS temporarily unavailable');
   }
 
   if (!response.ok) {
+    releaseOperation(operation, false);
     throw new Error(`[Cloud] TTS error ${response.status}`);
   }
 
   cloudState = 'available';
 
-  const buffer = await response.arrayBuffer();
-  if (signal.aborted) return;
+  let buffer: ArrayBuffer;
+  try {
+    buffer = await awaitOwned(operation, response.arrayBuffer());
+  } catch (error) {
+    releaseOperation(operation, false);
+    throw error;
+  }
+  operation.cancel = null;
+  if (activeOperation !== operation || signal.aborted) throw abortError();
 
   const blob = new Blob([buffer], { type: 'audio/mpeg' });
   const url = URL.createObjectURL(blob);
-
-  stopCloud(); // clean up any previous audio
+  operation.objectUrl = url;
 
   return new Promise<void>((resolve, reject) => {
-    const audio = new Audio(url);
-    activeAudio = audio;
-    activeObjectUrl = url;
+    let audio: HTMLAudioElement;
+    try {
+      audio = new Audio(url);
+    } catch (error) {
+      releaseOperation(operation, false);
+      reject(error instanceof Error ? error : new Error(String(error)));
+      return;
+    }
+    operation.audio = audio;
+    // Once audio exists, cancellation stops it and resolves playback.
+    operation.cancel = resolve;
 
     audio.onended = () => {
-      if (activeAudio === audio) activeAudio = null;
-      URL.revokeObjectURL(url);
-      if (activeObjectUrl === url) activeObjectUrl = null;
+      if (activeOperation !== operation) return;
+      operation.cancel = null;
+      releaseOperation(operation, false);
       console.log(`[Cloud] ${langCode} → ${voice.voiceName} done`);
       resolve();
     };
 
     audio.onerror = () => {
-      if (activeAudio === audio) activeAudio = null;
-      URL.revokeObjectURL(url);
-      if (activeObjectUrl === url) activeObjectUrl = null;
+      if (activeOperation !== operation) return;
+      operation.cancel = null;
+      releaseOperation(operation, false);
       reject(new Error('[Cloud] Audio playback error'));
     };
 
     console.log(`[Cloud] ${langCode} → ${voice.voiceName}`);
     audio.play().catch(err => {
-      if (activeAudio === audio) activeAudio = null;
-      URL.revokeObjectURL(url);
-      if (activeObjectUrl === url) activeObjectUrl = null;
+      if (activeOperation !== operation) return;
+      operation.cancel = null;
+      releaseOperation(operation, false);
       reject(err instanceof Error ? err : new Error(String(err)));
     });
   });

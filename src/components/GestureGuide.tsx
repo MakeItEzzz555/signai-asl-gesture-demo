@@ -1,8 +1,8 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { X } from 'lucide-react';
 import { type FaceRegion } from '../hooks/useMediaPipe';
 import { translateGesture, type LanguageCode } from '../i18n/translations';
-import { cn } from '@/lib/utils';
+import { cn } from '../lib/utils';
 
 interface GestureGuideProps {
   language: LanguageCode;
@@ -40,10 +40,34 @@ const FACE_GESTURES: FaceGestureInfo[] = [
 ];
 
 export default function GestureGuide({ language, onClose }: GestureGuideProps) {
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const closeRef = useRef<HTMLButtonElement>(null);
+
   useEffect(() => {
-    const handler = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    const previous = document.activeElement as HTMLElement | null;
+    closeRef.current?.focus();
+    const handler = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        onClose();
+        return;
+      }
+      if (event.key !== 'Tab' || !dialogRef.current) return;
+      const focusable = [...dialogRef.current.querySelectorAll<HTMLElement>('button:not(:disabled), a[href], select, [tabindex]:not([tabindex="-1"])')];
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last?.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first?.focus();
+      }
+    };
     window.addEventListener('keydown', handler);
-    return () => window.removeEventListener('keydown', handler);
+    return () => {
+      window.removeEventListener('keydown', handler);
+      previous?.focus();
+    };
   }, [onClose]);
 
   return (
@@ -52,6 +76,10 @@ export default function GestureGuide({ language, onClose }: GestureGuideProps) {
       onClick={onClose}
     >
       <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="gesture-guide-title"
         className="bg-card border border-border rounded-xl w-full max-w-2xl max-h-[85vh] overflow-y-auto shadow-2xl"
         onClick={e => e.stopPropagation()}
       >
@@ -59,14 +87,16 @@ export default function GestureGuide({ language, onClose }: GestureGuideProps) {
         <div className="sticky top-0 bg-card border-b border-border flex items-center justify-between px-5 py-3 rounded-t-xl">
           <div className="flex items-center gap-2">
             <span className="text-lg">📖</span>
-            <h2 className="text-sm font-bold text-foreground" style={{ fontFamily: 'Space Grotesk' }}>
+            <h2 id="gesture-guide-title" className="text-sm font-bold text-foreground" style={{ fontFamily: 'Space Grotesk' }}>
               Gesture Reference Guide
             </h2>
           </div>
           <button
+            ref={closeRef}
+            type="button"
             onClick={onClose}
             className="p-1.5 rounded-lg hover:bg-muted text-muted-foreground hover:text-foreground transition-colors"
-            aria-label="Close"
+            aria-label="Close gesture guide"
           >
             <X className="w-4 h-4" />
           </button>
@@ -133,7 +163,7 @@ export default function GestureGuide({ language, onClose }: GestureGuideProps) {
           </section>
 
           <p className="text-[11px] font-mono text-muted-foreground pt-1 border-t border-border">
-            All detection is 100% client-side — no data is sent to any server.
+            Camera frames and landmark detection stay in this browser. Optional online speech sends only generated text to the configured speech provider.
           </p>
         </div>
       </div>

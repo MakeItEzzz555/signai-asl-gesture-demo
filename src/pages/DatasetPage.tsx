@@ -23,6 +23,7 @@ import type { Landmark } from '../utils/landmarks';
 import { toHandOnlyFeatures } from '../utils/landmarks';
 import { cn } from '@/lib/utils';
 import { toast } from 'sonner';
+import { ImportOwnership } from '../dataset/importOwnership';
 
 const MIN_SAMPLES_PER_CLASS = 20;
 const CAPTURE_INTERVAL_MS = 200; // Capture one sample every 200ms when recording
@@ -36,10 +37,13 @@ export default function DatasetPage() {
     addSample,
     removeLabel,
     clearDataset,
-    importDataset,
     mergeDataset,
+    replaceDatasetBundle,
+    mergeDatasetBundle,
     setCustomTranslation,
-    mergeCustomTranslations,
+    datasetStorageStatus,
+    datasetStorageError,
+    flushDatasetStorage,
   } = useApp();
   const [selectedGesture, setSelectedGesture] = useState(TRAINABLE_DEFAULT_GESTURES[0] ?? DEFAULT_GESTURES[0]);
   const [customGesture, setCustomGesture] = useState('');
@@ -50,14 +54,25 @@ export default function DatasetPage() {
   const [captureCount, setCaptureCount] = useState(0);
   const captureCountRef = useRef(0);
   const captureIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const latestFeaturesRef = useRef<number[] | null>(null);
+  const latestFeaturesRef = useRef<{ features: number[]; frame: number; seenAt: number } | null>(null);
+  const latestFrameRef = useRef(0);
+  const lastCapturedFrameRef = useRef(0);
+  const recordingLabelRef = useRef<string | null>(null);
+  const endingRecordingRef = useRef<Promise<void> | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const importModeRef = useRef<'replace' | 'merge'>('replace');
+  const importOwnerRef = useRef(new ImportOwnership());
+  const invalidatePendingImport = useCallback(() => {
+    importOwnerRef.current.invalidate();
+    if (fileInputRef.current) fileInputRef.current.value = '';
+  }, []);
 
   const onLandmarks = useCallback((features: number[], _raw: Landmark[] | null, handPresent: boolean, _isHeld: boolean, _rawLeft?: Landmark[] | null, _face?: Landmark[] | null) => {
     // Store features whenever ANY hand is present (right or left)
     const anyHandPresent = handPresent || (_rawLeft != null);
-    latestFeaturesRef.current = anyHandPresent ? toHandOnlyFeatures(features) : null;
+    latestFeaturesRef.current = anyHandPresent
+      ? { features: toHandOnlyFeatures(features), frame: ++latestFrameRef.current, seenAt: Date.now() }
+      : null;
   }, []);
 
   const { videoRef, canvasRef, state: camState, start, stop } = useMediaPipe({
@@ -81,44 +96,91 @@ export default function DatasetPage() {
     ...dataset.labels.filter(l => !DEFAULT_GESTURES.includes(l) && !isFaceInteractiveGesture(l)),
   ])), [customGestureLabels, dataset.labels]);
 
+  const canMutateDataset = datasetStorageStatus !== 'loading' && datasetStorageStatus !== 'error';
+
+  const endRecording = useCallback((announce = true): Promise<void> => {
+    if (endingRecordingRef.current) return endingRecordingRef.current;
+
+    const wasRecording = captureIntervalRef.current !== null;
+    const label = recordingLabelRef.current ?? selectedGesture;
+    const count = captureCountRef.current;
+    if (captureIntervalRef.current) clearInterval(captureIntervalRef.current);
+    captureIntervalRef.current = null;
+    latestFeaturesRef.current = null;
+    recordingLabelRef.current = null;
+    setIsRecording(false);
+
+    const ending = (async () => {
+      if (!wasRecording) return;
+      const saved = await flushDatasetStorage();
+      if (!announce) return;
+      if (saved) {
+        toast.success(`Recorded ${count} samples for "${label}" and saved them`);
+      } else {
+        toast.error(`Recorded ${count} samples for "${label}", but browser storage could not save them`);
+      }
+    })();
+    endingRecordingRef.current = ending;
+    void ending.finally(() => {
+      if (endingRecordingRef.current === ending) endingRecordingRef.current = null;
+    });
+    return ending;
+  }, [flushDatasetStorage, selectedGesture]);
+
   const startRecording = useCallback(() => {
-    if (!camState.isActive) {
+    if (!camState.isActive || !canMutateDataset) {
       toast.error('Please start the camera first');
       return;
     }
+    invalidatePendingImport();
     setIsRecording(true);
     setCaptureCount(0);
     captureCountRef.current = 0;
+    recordingLabelRef.current = selectedGesture;
+    latestFeaturesRef.current = null;
+    lastCapturedFrameRef.current = 0;
 
     captureIntervalRef.current = setInterval(() => {
-      const features = latestFeaturesRef.current;
-      if (features) {
+      const frame = latestFeaturesRef.current;
+      if (
+        frame
+        && frame.frame > lastCapturedFrameRef.current
+        && Date.now() - frame.seenAt <= CAPTURE_INTERVAL_MS * 2
+        && recordingLabelRef.current
+      ) {
         addSample({
-          label: selectedGesture,
-          landmarks: features,
+          label: recordingLabelRef.current,
+          landmarks: frame.features,
           timestamp: Date.now(),
         });
+        lastCapturedFrameRef.current = frame.frame;
         captureCountRef.current += 1;
         setCaptureCount(captureCountRef.current);
       }
     }, CAPTURE_INTERVAL_MS);
-  }, [camState.isActive, selectedGesture, addSample]);
+  }, [camState.isActive, canMutateDataset, selectedGesture, addSample, invalidatePendingImport]);
 
   const stopRecording = useCallback(() => {
-    setIsRecording(false);
-    if (captureIntervalRef.current) {
-      clearInterval(captureIntervalRef.current);
-      captureIntervalRef.current = null;
-    }
-    toast.success(`Recorded ${captureCountRef.current} samples for "${selectedGesture}"`);
-  }, [selectedGesture]);
+    void endRecording();
+  }, [endRecording]);
+
+  const handleStopCamera = useCallback(() => {
+    void endRecording();
+    stop();
+  }, [endRecording, stop]);
+
+  const selectGesture = useCallback((gesture: string) => {
+    void endRecording(false);
+    setSelectedGesture(gesture);
+  }, [endRecording]);
 
   // Cleanup on unmount
   useEffect(() => {
     return () => {
-      if (captureIntervalRef.current) clearInterval(captureIntervalRef.current);
+      invalidatePendingImport();
+      void endRecording(false);
     };
-  }, []);
+  }, [endRecording, invalidatePendingImport]);
 
   const handleExport = () => {
     if (dataset.samples.length === 0) {
@@ -142,8 +204,11 @@ export default function DatasetPage() {
   const handleImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
+    const mode = importModeRef.current;
+    const requestId = importOwnerRef.current.begin();
     try {
       const text = await file.text();
+      if (!importOwnerRef.current.owns(requestId)) return;
       const parsed = parseImportedDatasetBundle(text);
       const samples = parsed.samples.filter(sample => !isFaceInteractiveGesture(sample.label));
       const skippedFaceSamples = parsed.samples.length - samples.length;
@@ -153,35 +218,41 @@ export default function DatasetPage() {
           : 'No samples found in dataset');
         return;
       }
-      if (importModeRef.current === 'merge') {
-        mergeDataset(samples);
-        mergeCustomTranslations(parsed.customTranslations);
+      if (!importOwnerRef.current.owns(requestId)) return;
+      void endRecording(false);
+      if (mode === 'merge') {
+        mergeDatasetBundle(samples, parsed.customTranslations);
         toast.success(`Added ${describeSamples(samples)}${parsed.convertedToHandOnlyCount > 0 ? `; converted ${parsed.convertedToHandOnlyCount} old samples to hand-only` : ''}${skippedFaceSamples > 0 ? `; skipped ${skippedFaceSamples} face-touch samples` : ''}`);
       } else {
-        importDataset(samples);
+        replaceDatasetBundle(samples, parsed.customTranslations);
         setCustomGestureLabels([]);
-        mergeCustomTranslations(parsed.customTranslations);
         toast.success(`Imported ${describeSamples(samples)}${parsed.convertedToHandOnlyCount > 0 ? `; converted ${parsed.convertedToHandOnlyCount} old samples to hand-only` : ''}${skippedFaceSamples > 0 ? `; skipped ${skippedFaceSamples} face-touch samples` : ''}`);
       }
     } catch (err) {
-      toast.error(`Import failed: ${err instanceof Error ? err.message : 'Invalid file'}`);
+      if (importOwnerRef.current.owns(requestId)) {
+        toast.error(`Import failed: ${err instanceof Error ? err.message : 'Invalid file'}`);
+      }
+    } finally {
+      if (importOwnerRef.current.owns(requestId) && fileInputRef.current) fileInputRef.current.value = '';
     }
-    // Reset file input
-    if (fileInputRef.current) fileInputRef.current.value = '';
   };
 
   const handleLoadStarterDataset = () => {
+    invalidatePendingImport();
     const samples = generateDemoDataset(TRAINABLE_DEFAULT_GESTURES, 30);
     if (samples.length === 0) {
       toast.error('Starter dataset could not be generated');
       return;
     }
+    void endRecording(false);
     mergeDataset(samples);
     toast.success(`Added ${describeSamples(samples)}`);
   };
 
   const handleClear = () => {
     if (confirm('Clear all dataset samples? This cannot be undone.')) {
+      invalidatePendingImport();
+      void endRecording(false);
       clearDataset();
       setCustomGestureLabels([]);
       toast.info('Dataset cleared');
@@ -199,11 +270,12 @@ export default function DatasetPage() {
       toast.error('Gesture already exists');
       return;
     }
+    invalidatePendingImport();
     if (customGestureTranslation.trim()) {
       setCustomTranslation(name, currentLanguage, customGestureTranslation);
     }
     setCustomGestureLabels(prev => prev.includes(name) ? prev : [...prev, name]);
-    setSelectedGesture(name);
+    selectGesture(name);
     setCustomGesture('');
     setCustomGestureTranslation('');
     toast.success(`Added gesture: ${name}`);
@@ -215,11 +287,12 @@ export default function DatasetPage() {
 
   useEffect(() => {
     if (allGestures.length > 0 && !allGestures.includes(selectedGesture)) {
-      setSelectedGesture(allGestures[0]);
+      selectGesture(allGestures[0]);
     }
-  }, [allGestures, selectedGesture]);
+  }, [allGestures, selectedGesture, selectGesture]);
 
   const handleSelectedTranslationChange = (value: string) => {
+    invalidatePendingImport();
     setSelectedTranslation(value);
     setCustomTranslation(selectedGesture, currentLanguage, value);
   };
@@ -233,11 +306,20 @@ export default function DatasetPage() {
         <p className="text-sm text-muted-foreground mt-1">
           Record gesture samples from your webcam to build a training dataset.
         </p>
+        <p className={cn(
+          'text-xs mt-2',
+          datasetStorageStatus === 'error' ? 'text-destructive' : 'text-muted-foreground',
+        )}>
+          {datasetStorageStatus === 'loading' && 'Loading saved dataset…'}
+          {datasetStorageStatus === 'saving' && 'Saving dataset locally…'}
+          {datasetStorageStatus === 'saved' && 'Dataset saved locally'}
+          {datasetStorageStatus === 'error' && `Dataset storage needs recovery: ${datasetStorageError ?? 'unknown error'}. Import a replacement or clear data to continue.`}
+        </p>
       </div>
 
-      <div className="grid grid-cols-5 gap-6">
+      <div className="grid grid-cols-1 gap-6 xl:grid-cols-5">
         {/* ── Left: Camera + Recording ─────────────────────────────── */}
-        <div className="col-span-3 space-y-4">
+        <div className="min-w-0 space-y-4 xl:col-span-3">
           {/* Camera panel */}
           <div className="bg-card border border-border rounded-xl overflow-hidden">
             <div className="flex items-center justify-between px-4 py-3 border-b border-border">
@@ -316,7 +398,7 @@ export default function DatasetPage() {
             </div>
 
             {/* Camera controls */}
-            <div className="p-4 flex items-center gap-3">
+            <div className="p-4 flex flex-wrap items-center gap-3">
               {!camState.isActive ? (
                 <button
                   onClick={start}
@@ -328,7 +410,7 @@ export default function DatasetPage() {
                 </button>
               ) : (
                 <button
-                  onClick={stop}
+                  onClick={handleStopCamera}
                   className="flex items-center gap-2 px-4 py-2 rounded-lg bg-muted text-foreground text-sm font-medium hover:bg-accent transition-colors"
                 >
                   <StopCircle className="w-4 h-4" />
@@ -339,7 +421,7 @@ export default function DatasetPage() {
               {!isRecording ? (
                 <button
                   onClick={startRecording}
-                  disabled={!camState.isActive || (!camState.rawLandmarks && !camState.leftRawLandmarks)}
+                  disabled={!canMutateDataset || !camState.isActive || (!camState.rawLandmarks && !camState.leftRawLandmarks)}
                   className={cn(
                     "flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all",
                     camState.isActive && (camState.rawLandmarks || camState.leftRawLandmarks)
@@ -375,7 +457,8 @@ export default function DatasetPage() {
               {allGestures.map(gesture => (
                 <button
                   key={gesture}
-                  onClick={() => setSelectedGesture(gesture)}
+                  onClick={() => selectGesture(gesture)}
+                  disabled={!canMutateDataset}
                   className={cn(
                     "px-3 py-1.5 rounded-full text-xs font-medium transition-all border",
                     selectedGesture === gesture
@@ -392,17 +475,20 @@ export default function DatasetPage() {
             </div>
             {/* Add custom gesture */}
             <div className="space-y-2">
-              <div className="flex gap-2">
+              <div className="flex flex-col gap-2 sm:flex-row">
                 <input
                   type="text"
                   value={customGesture}
                   onChange={e => setCustomGesture(e.target.value)}
                   onKeyDown={e => e.key === 'Enter' && handleAddCustom()}
+                  disabled={!canMutateDataset}
                   placeholder="Add custom gesture..."
-                  className="flex-1 px-3 py-1.5 rounded-lg bg-muted border border-border text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary/50"
+                  className="min-w-0 flex-1 px-3 py-1.5 rounded-lg bg-muted border border-border text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary/50"
                 />
                 <button
                   onClick={handleAddCustom}
+                  disabled={!canMutateDataset}
+                  aria-label="Add custom gesture"
                   className="px-3 py-1.5 rounded-lg bg-primary/20 text-primary border border-primary/30 text-sm hover:bg-primary/30 transition-colors"
                 >
                   <Plus className="w-4 h-4" />
@@ -413,6 +499,7 @@ export default function DatasetPage() {
                 value={customGestureTranslation}
                 onChange={e => setCustomGestureTranslation(e.target.value)}
                 onKeyDown={e => e.key === 'Enter' && handleAddCustom()}
+                disabled={!canMutateDataset}
                 placeholder={`Optional ${currentLanguageName} translation for new gesture...`}
                 className="w-full px-3 py-1.5 rounded-lg bg-muted/60 border border-border text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary/50"
               />
@@ -425,6 +512,7 @@ export default function DatasetPage() {
                     type="text"
                     value={selectedTranslation}
                     onChange={e => handleSelectedTranslationChange(e.target.value)}
+                    disabled={!canMutateDataset}
                     placeholder="Leave empty to show the raw label"
                     className="w-full px-3 py-1.5 rounded-lg bg-muted/60 border border-border text-xs text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-primary/50"
                   />
@@ -435,7 +523,7 @@ export default function DatasetPage() {
         </div>
 
         {/* ── Right: Dataset Stats ─────────────────────────────────── */}
-        <div className="col-span-2 space-y-4">
+        <div className="min-w-0 space-y-4 xl:col-span-2">
           {/* Summary */}
           <div className="bg-card border border-border rounded-xl p-4">
             <h3 className="text-sm font-semibold mb-3" style={{ fontFamily: 'Space Grotesk' }}>
@@ -478,12 +566,16 @@ export default function DatasetPage() {
                           <button
                             onClick={() => {
                               if (confirm(`Delete all samples for "${label}"?`)) {
+                                invalidatePendingImport();
+                                void endRecording(false);
                                 removeLabel(label);
                                 setCustomGestureLabels(prev => prev.filter(customLabel => customLabel !== label));
                                 toast.info(`Removed "${label}" from dataset`);
                               }
                             }}
-                            className="opacity-0 group-hover:opacity-100 transition-opacity text-destructive hover:text-destructive/80"
+                            disabled={!canMutateDataset}
+                            aria-label={`Delete all samples for ${label}`}
+                            className="text-destructive transition-opacity hover:text-destructive/80 sm:opacity-0 sm:group-hover:opacity-100 sm:focus:opacity-100"
                           >
                             <Trash2 className="w-3 h-3" />
                           </button>
@@ -524,6 +616,7 @@ export default function DatasetPage() {
             </button>
             <button
               onClick={handleLoadStarterDataset}
+              disabled={!canMutateDataset}
               className="w-full flex items-center gap-2 px-4 py-2.5 rounded-lg bg-primary/10 text-primary border border-primary/20 text-sm font-medium hover:bg-primary/20 transition-colors"
             >
               <Plus className="w-4 h-4" />
@@ -531,6 +624,7 @@ export default function DatasetPage() {
             </button>
             <button
               onClick={() => openImport('merge')}
+              disabled={!canMutateDataset}
               className="w-full flex items-center gap-2 px-4 py-2.5 rounded-lg bg-muted text-foreground border border-border text-sm font-medium hover:bg-accent transition-colors"
             >
               <Upload className="w-4 h-4" />
@@ -538,6 +632,7 @@ export default function DatasetPage() {
             </button>
             <button
               onClick={() => openImport('replace')}
+              disabled={datasetStorageStatus === 'loading'}
               className="w-full flex items-center gap-2 px-4 py-2.5 rounded-lg bg-muted text-foreground border border-border text-sm font-medium hover:bg-accent transition-colors"
             >
               <Upload className="w-4 h-4" />
@@ -552,6 +647,7 @@ export default function DatasetPage() {
             />
             <button
               onClick={handleClear}
+              disabled={datasetStorageStatus === 'loading'}
               className="w-full flex items-center gap-2 px-4 py-2.5 rounded-lg bg-destructive/10 text-destructive border border-destructive/20 text-sm font-medium hover:bg-destructive/20 transition-colors"
             >
               <Trash2 className="w-4 h-4" />
