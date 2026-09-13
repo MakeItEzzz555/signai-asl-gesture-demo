@@ -1,7 +1,10 @@
 # Sol orchestration execution plan — SignAI stabilization
 
 Prepared: 2026-09-12. Baseline: `49720a7` (`Enforce ONNX-first hybrid gating`).
-Status: **PLAN ONLY — implementation has not started.**
+Status: **EXECUTED — preserved as the historical implementation plan.** Final
+outcomes and verification are recorded in
+[STABILIZATION_STATUS.md](STABILIZATION_STATUS.md) and
+[STABILIZATION_REVIEW.md](STABILIZATION_REVIEW.md).
 Audience: a `gpt-5.6-sol` root coordinator executing this plan with Sol, Terra and Luna workers.
 
 ## 1. Objective and scope

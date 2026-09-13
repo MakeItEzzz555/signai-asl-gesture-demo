@@ -11,4 +11,28 @@ Sol's read-only integrated gate found four remaining P1 issues after the first g
 
 The conditional TTS security concern was also tightened: each paid provider attempt, including the fallback retry, consumes quota. Production remains fail-closed until both an atomic shared quota implementation and a trusted platform-derived client identity function are supplied; unverified forwarding headers are not used by the production entrypoint.
 
-No further correctness defect was found in the affected code during root review. Remaining limitations are environmental rather than silently accepted behavior: real camera/MediaPipe CDN execution, accuracy with real signers, a complete browser TensorFlow training/save/load cycle, audible backends, Safari/iOS, live Google TTS, and deployed quota infrastructure require their respective devices, credentials, or production environment.
+No further correctness defect was found in the affected code during root review.
+Remaining limitations are environmental rather than silently accepted behavior:
+real camera/MediaPipe execution, accuracy with real signers, a saved-model reload
+cycle on physical devices, audible backends, Safari/iOS, live Google TTS, and
+deployed quota infrastructure require their respective devices, credentials, or
+production environment. A browser training-completion check was performed later
+and is recorded below.
+
+## Follow-up after the independent gate
+
+Two focused refinement commits followed the gate without changing its recognition,
+data-integrity, speech, or security conclusions:
+
+- `2a79138` moved ONNX WASM work to its worker proxy, made concurrent model-load
+  callers await one shared operation, corrected Training Complete number formatting,
+  widened the desktop Recognize camera area to 70%, and moved Sentence Output below it.
+- `8823428` restored Dataset's natural camera aspect ratio, kept Recording Target
+  directly below it, aligned the total left and right card-column heights, and retained
+  full-width Recording Tips.
+
+Root re-ran TypeScript, the complete 73-test Vitest suite, the production build,
+and all four Playwright tests after the first refinement. After the final Dataset
+adjustment, TypeScript and all four Playwright tests passed again, and the desktop
+layout was visually checked at 1440×1200. A separate five-epoch Chromium training
+run completed and confirmed that the final metrics no longer overlap.

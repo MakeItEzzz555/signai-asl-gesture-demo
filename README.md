@@ -83,6 +83,12 @@ npm run dev
 
 Open the Vite URL, grant camera permission, and use **Recognize**.
 
+On a cold visit, the browser must download and initialize the ONNX model/runtime
+and MediaPipe assets. ONNX WASM work runs through a worker proxy so initialization
+does not occupy the main UI thread, and concurrent startup requests share one load.
+Normal reloads are usually faster once browser caches are warm; this does not mean
+the underlying inference itself runs faster.
+
 ## App Sections
 
 - **Home:** overview and entry points.
@@ -100,8 +106,25 @@ npm run dev       # local development server
 npm run build     # production build into dist/
 npm run preview   # preview the production build
 npm run typecheck # TypeScript check
+npm run typecheck:server # server-side TypeScript check
 npm test          # Vitest unit tests
+npm run test:e2e  # Playwright browser tests
 ```
+
+## Current Stabilization Handoff
+
+The completed stabilization work and its verification evidence are recorded in
+[research/STABILIZATION_STATUS.md](research/STABILIZATION_STATUS.md). The original
+critical findings and the independent acceptance review remain available in
+[research/CRITICAL_REVIEW_2026-09-11.md](research/CRITICAL_REVIEW_2026-09-11.md)
+and [research/STABILIZATION_REVIEW.md](research/STABILIZATION_REVIEW.md).
+
+The current desktop layout gives Recognize a 70/30 camera-to-status split and
+places Sentence Output below the camera. Dataset keeps Webcam Feed and Recording
+Target together in the wider left column, aligns their combined height with the
+two right-side cards, and places Recording Tips across the full content width.
+Training completion metrics format losses to four decimal places so values remain
+readable at responsive sizes.
 
 ## Offline Model Research
 

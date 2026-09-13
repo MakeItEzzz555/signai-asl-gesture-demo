@@ -1,5 +1,10 @@
 # Copy-paste execution prompt for Sol
 
+> Historical note (2026-09-13): this prompt was executed. The completed work and
+> verification evidence are recorded in [STABILIZATION_STATUS.md](STABILIZATION_STATUS.md)
+> and [STABILIZATION_REVIEW.md](STABILIZATION_REVIEW.md). Keep this file as an audit
+> record; it is not an outstanding instruction.
+
 Start the execution session with **gpt-5.6-sol** selected as the main model. Paste:
 
 ```text
